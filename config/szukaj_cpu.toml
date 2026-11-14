@@ -64,6 +64,19 @@ min_hits = 1
 # An event ends after this many seconds without a detection
 event_gap = 10
 
+# Objects that stand still (e.g. a car parked on the driveway) are detected in every
+# frame; at night confidence hovers around the threshold, so without this the car would
+# start a new event every time it reappears. A box that stays in the same place for
+# static_after seconds is remembered as stationary and further detections there are
+# ignored. Arrival, departure and movement (a different box) still raise an event.
+# The list survives restarts (~/.szukaj_cpu/nieruchome.json).
+#   static_classes – classes this applies to; [] = off. Do not add "person".
+#   static_after   – seconds in the same place before an object counts as stationary
+#   static_forget  – a stationary object is forgotten after this many seconds unseen
+static_classes = ["car", "truck", "bus", "motorcycle", "bicycle"]
+static_after = 60
+static_forget = 21600
+
 # Frames taller than this are scaled down (e.g. 4K -> 1080p); 0 = no scaling
 max_height = 1080
 
