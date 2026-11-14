@@ -65,7 +65,7 @@ NAME_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})")   # jak w
 SEG_RE = re.compile(r"^(\d{8}-\d{6})\.ts$")
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 FILE_TS = "%Y-%m-%dT%H-%M-%S"
-__version__ = "1.0.4"
+__version__ = "1.0.5"
 CONF_DIR = Path(os.path.expanduser("~/.szukaj_cpu"))
 DEFAULT_CONF = "~/.szukaj_cpu/szukaj_cpu.toml"
 
@@ -163,7 +163,7 @@ def mask_url(url):
 SCHEMA = {
     "paths": {"recordings", "gallery", "buffer", "model", "ffmpeg", "ffprobe", "vaapi_device", "log_file"},
     "detection": {"classes", "confidence", "imgsz", "aspect_ratio", "engine", "threads", "min_hits", "event_gap",
-                  "max_height", "watchdog", "frame_selection", "analysis_interval"},
+                  "static_classes", "static_after", "static_forget", "max_height", "watchdog", "frame_selection", "analysis_interval"},
     "clips": {"enabled", "pre_seconds", "post_seconds", "max_length", "segment_length"},
     "gallery": {"retention_days", "refresh_seconds", "http_port", "http_user", "http_password",
                 "full_frame", "full_format",
@@ -241,6 +241,10 @@ def load_config(path):
     c.watki = get("detection", "threads", 2, int)
     c.min_hits = get("detection", "min_hits", 1, int)
     c.gap = get("detection", "event_gap", 10.0, float)
+    c.static_cls = {str(x).strip() for x in get("detection", "static_classes",
+                    ["car", "truck", "bus", "motorcycle", "bicycle"], list) if str(x).strip()}
+    c.static_after = get("detection", "static_after", 60.0, float)
+    c.static_forget = get("detection", "static_forget", 6 * 3600.0, float)
     c.max_h = get("detection", "max_height", 1080, int)
     c.watchdog = get("detection", "watchdog", 30.0, float)
     c.selection = get("detection", "frame_selection", "interval", str).strip().lower()
@@ -426,6 +430,7 @@ class Camera:
         self.frames = 0             # licznik do statystyk
         self.dropped = 0
         self.event = None
+        self.tracks = []            # obiekty stojące w miejscu (np. zaparkowane auto), patrz static_filter
         self.last_notify = 0.0
         self.err = deque(maxlen=15)
 
@@ -1725,8 +1730,89 @@ def close_event(cfg, cam, gallery, clipper):
              datetime.fromtimestamp(ev["end"]).strftime("%H:%M:%S"), ev["hits"], ev["max_n"], ev["best"])
 
 
+# ── obiekty nieruchome ──
+# Auto zaparkowane na podjeździe jest wykrywane w każdej klatce. W nocy pewność skacze wokół
+# progu, więc znika na dłużej niż event_gap i każde ponowne wykrycie dawało nowe zdarzenie.
+# Ramka, która stoi w tym samym miejscu dłużej niż static_after, jest zapamiętywana jako
+# nieruchoma i dalsze wykrycia w tym miejscu są pomijane. Przyjazd, odjazd i ruch (inna ramka)
+# nadal wywołują zdarzenie. Dotyczy tylko klas ze static_classes (domyślnie bez "person").
+STATIC_IOU = 0.6
+STATIC_MAX = 64
+
+
+def box_iou(a, b):
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def static_filter(cfg, cam, t, frame, dets):
+    if not cfg.static_cls or cfg.static_after <= 0:
+        return dets
+    h, w = frame.shape[:2]
+    keep = []
+    for d in dets:
+        if d[5] not in cfg.static_cls:
+            keep.append(d)
+            continue
+        box = (d[0] / w, d[1] / h, d[2] / w, d[3] / h)
+        best, score = None, STATIC_IOU
+        for tr in cam.tracks:
+            if tr["label"] == d[5]:
+                s = box_iou(box, tr["box"])
+                if s >= score:
+                    best, score = tr, s
+        if best is None:
+            # nowe miejsce (przyjazd albo ruch) – osobny ślad, dotychczasowe zostają
+            cam.tracks.append({"label": d[5], "box": box, "since": t, "seen": t, "static": False})
+            keep.append(d)
+            continue
+        best["seen"] = t
+        if not best["static"] and t - best["since"] >= cfg.static_after:
+            best["static"] = True
+            log.info("[%s] %s stoi w miejscu od %.0f s – kolejne wykrycia w tym miejscu pomijam",
+                     cam.name, d[5], t - best["since"])
+        if not best["static"]:
+            keep.append(d)
+    # zapominanie: nieruchome po static_forget bez wykrycia, pozostałe szybko
+    cam.tracks = [tr for tr in cam.tracks
+                  if t - tr["seen"] <= (cfg.static_forget if tr["static"] else max(cfg.static_after, cfg.gap))]
+    del cam.tracks[:-STATIC_MAX]
+    return keep
+
+
+def static_state_path(cfg):
+    return Path(cfg.path).parent / "nieruchome.json"
+
+
+def save_static(cfg, cams):
+    data = {c.name: [tr for tr in c.tracks if tr["static"]] for c in cams}
+    try:
+        tmp = static_state_path(cfg).with_suffix(".tmp")
+        tmp.write_text(json.dumps(data))
+        tmp.replace(static_state_path(cfg))
+    except OSError as e:
+        log.warning("Nie zapisano stanu obiektów nieruchomych: %s", e)
+
+
+def load_static(cfg, cams):
+    try:
+        data = json.loads(static_state_path(cfg).read_text())
+    except (OSError, ValueError):
+        return
+    now = time.time()
+    for c in cams:
+        c.tracks = [dict(tr, box=tuple(tr["box"])) for tr in data.get(c.name, [])
+                    if tr.get("label") in cfg.static_cls and now - tr.get("seen", 0) <= cfg.static_forget]
+        if c.tracks:
+            log.info("[%s] obiekty nieruchome z poprzedniego uruchomienia: %s", c.name,
+                     ", ".join(tr["label"] for tr in c.tracks))
+
+
 def process(cfg, det, cam, t, frame):
-    dets = detect(det, cam, frame)
+    dets = static_filter(cfg, cam, t, frame, detect(det, cam, frame))
     if dets:
         on_detections(cfg, cam, t, frame, dets)
 
@@ -1885,6 +1971,7 @@ def main():
     clipper = Clipper(cfg, cams, gallery, det)
     threading.Thread(target=clipper.loop, name="klipy", daemon=True).start()
     start_http(cfg, cams)
+    load_static(cfg, cams)
     gallery.cleanup()
     last_cleanup = last_stats = time.time()
 
@@ -1917,6 +2004,7 @@ def main():
                 log.info("Inferencja: śr. %.0f ms/klatkę (%d klatek)", det.ms_total / det.n, det.n)
                 det.ms_total, det.n = 0.0, 0
             log_memory(cams)
+            save_static(cfg, cams)
             last_stats = now
         if not busy:
             STOP.wait(0.05)
@@ -1927,6 +2015,7 @@ def main():
         if cam.event is not None:
             close_event(cfg, cam, gallery, clipper)
     clipper.run_due(force=True)
+    save_static(cfg, cams)
     log.info("Zatrzymano.")
     hard_exit(0)
 
