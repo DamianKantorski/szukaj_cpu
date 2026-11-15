@@ -1,3 +1,4 @@
+build/
 dist/
 ffmpeg-szukaj/
 __pycache__/

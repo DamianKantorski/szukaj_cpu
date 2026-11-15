@@ -34,53 +34,85 @@ events ──► gallery (index.html, wyniki.csv, thumbnails, clips, full frames
 
 | Path | Content |
 |---|---|
-| `/opt/szukaj_cpu/` | program, Python venv, config template, tools, ntfy setup |
+| `/opt/szukaj_cpu/` | program (`run.py`, package `szukaj_cpu/`), Python venv, config template, tools, ntfy setup |
+| `/opt/szukaj_cpu/models/` | bundled OpenVINO models: FP32 and INT8 (full package) |
+| `/opt/szukaj_cpu/wheels/` | Python wheels for the offline install (full package) |
+| `/opt/szukaj_cpu/ffmpeg`, `ffprobe` | static ffmpeg built with the package (full package) |
 | `/usr/bin/szukaj-cpu` | launcher (`--init`, `--test`, `--version`) |
-| `/usr/bin/szukaj-cpu-export-tools` | optional model-export tools (Ultralytics + PyTorch) |
+| `/usr/bin/szukaj-cpu-export-tools` | optional model-export tools (Ultralytics + PyTorch + NNCF) |
 | `/usr/lib/systemd/system/szukaj_cpu@.service` | service, one instance per user |
 | `~/.szukaj_cpu/szukaj_cpu.toml` | configuration (cameras, paths, ntfy, Shinobi) |
-| `~/.szukaj_cpu/models/` | YOLO weights and exported OpenVINO models |
-| `~/.szukaj_cpu/ffmpeg`, `ffprobe` | optional static ffmpeg build (used when present) |
+| `~/.szukaj_cpu/models/` | your own models (uploaded in the panel or exported); used before bundled ones |
+| `~/.szukaj_cpu/ffmpeg`, `ffprobe` | optional own static ffmpeg (used before the bundled one) |
+
+### Source layout
+
+```
+src/run.py                 launcher (also /opt/szukaj_cpu/run.py)
+src/szukaj_cpu/
+  common.py    constants, logger, STOP flag, helpers
+  config.py    reading and checking szukaj_cpu.toml
+  camera.py    ffmpeg commands, frame reader, segment buffer, watchdog
+  detector.py  YOLO in OpenVINO (FP32/INT8) or PyTorch, model lookup, zone/crop, drawing
+  export.py    YOLO -> OpenVINO export (FP32, INT8 via NNCF)
+  events.py    events, parked-vehicle filter
+  gallery.py   HTML gallery, CSV, retention
+  clips.py     clips and full-resolution frames from the main stream
+  notify.py    ntfy and Shinobi
+  main.py      arguments, main loop, --test, --init
+  web/         web server, detection-area page (area.html), configurator (config.html),
+               TOML editing, model upload
+tools/         build_ffmpeg.sh, export_models.py, compare_models.py, test_przerwy.py
+packaging/     build-deb.sh, debian/ maintainer scripts
+```
 
 ## Installation
 
-Build the package (any Debian/Ubuntu machine with `dpkg-deb`):
+### Building the package
+
+The full package contains everything that used to be downloaded during installation, so the
+server needs no internet access to install it:
+
+* Python wheels (OpenVINO, OpenCV, NumPy) for Debian 13's Python – installed offline,
+* YOLO11s OpenVINO models, **FP32 and INT8**, for `MODEL_SIZES` (default `960x544`),
+* `ffmpeg`/`ffprobe` compiled on the build machine (`tools/build_ffmpeg.sh`, `-march=skylake`).
+
+Everything is built in a Debian 13 container, so the build machine only needs Docker or
+Podman (e.g. CachyOS: `sudo pacman -S podman`; WSL/Ubuntu: `sudo apt install podman`):
 
 ```bash
-bash packaging/build-deb.sh            # → dist/szukaj-cpu_1.1.0_all.deb
+bash packaging/build-deb.sh                     # → dist/szukaj-cpu_1.2.0_amd64.deb
+bash packaging/build-deb.sh --calib ~/frames    # INT8 calibrated on frames from your cameras
+MODEL_SIZES="960x544 640x384" bash packaging/build-deb.sh
+bash packaging/build-deb.sh --slim              # program only; install downloads dependencies
 ```
 
-Install on the server (needs internet access – the post-install step creates the Python
-environment with OpenVINO and OpenCV):
+Intermediate results are cached in `build/` – the first build takes a while (ffmpeg, PyTorch
+for the export, quantization), later builds take a minute. `--rebuild-ffmpeg`,
+`--rebuild-models`, `--rebuild-wheels` and `--rebuild-all` refresh parts of it. Pushing a
+`vX.Y.Z` tag builds the same full package on GitHub Actions and attaches it to the release.
+
+### Installing
 
 ```bash
-sudo apt install ./szukaj-cpu_1.1.0_all.deb
+sudo apt install ./szukaj-cpu_1.2.0_amd64.deb
 szukaj-cpu --init                       # creates ~/.szukaj_cpu/szukaj_cpu.toml
-nano ~/.szukaj_cpu/szukaj_cpu.toml      # cameras, gallery path, Shinobi, ntfy
+nano ~/.szukaj_cpu/szukaj_cpu.toml      # cameras, gallery path, Shinobi, ntfy (or use the web panel)
 sudo usermod -aG render,video $USER     # iGPU access (log in again)
-```
-
-A model is exported once per input size. Install the export tools for that step only:
-
-```bash
-sudo szukaj-cpu-export-tools install    # Ultralytics + PyTorch (CPU), several hundred MB
-szukaj-cpu --test                       # exports the model, checks cameras and Shinobi API
-sudo szukaj-cpu-export-tools remove     # optional, the exported model stays
-```
-
-Start the service for your user:
-
-```bash
+szukaj-cpu --test                       # checks cameras, model and Shinobi API
 sudo systemctl enable --now szukaj_cpu@$USER
 journalctl -u szukaj_cpu@$USER -f
 ```
+
+If the server's Python does not match the bundled wheels (other than Debian 13), the
+install falls back to downloading them from PyPI.
 
 ### Migrating from the old `install.sh` setup (`~/szukaj_cpu`)
 
 ```bash
 bash uninstall.sh          # stops szukaj_cpu.service, moves config, models and static
                            # ffmpeg to ~/.szukaj_cpu, removes ~/szukaj_cpu
-sudo apt install ./szukaj-cpu_1.1.0_all.deb
+sudo apt install ./szukaj-cpu_1.2.0_amd64.deb
 sudo systemctl enable --now szukaj_cpu@$USER
 ```
 
@@ -125,6 +157,42 @@ departure and movement still raise events. The list survives restarts
 * `crop = [x1, y1, x2, y2]` – rectangle; only this part of the frame goes to the model.
   Smaller area = people appear larger to the model, so distant figures are detected better.
   `[]` = whole frame.
+
+## Models: FP32 and INT8
+
+`[detection] precision` selects the model version:
+
+* `"fp32"` – the standard export, most accurate;
+* `"int8"` – quantized with OpenVINO NNCF (post-training, calibrated on images). It runs
+  faster on the CPU at a small accuracy cost. On CPUs without VNNI (e.g. i5-7500) the gain
+  is smaller than on new ones – measure it on the server (below).
+
+Models are looked up in the directory of `[paths] model` (`~/.szukaj_cpu/models`, your own)
+and then in `/opt/szukaj_cpu/models` (bundled). If the INT8 model for the configured input
+size is missing, FP32 is used and a warning is logged. If no model exists at all, the
+service exports it (needs `sudo szukaj-cpu-export-tools install`).
+
+Switching in the web panel: **Configuration → Model** – version selector, list of available
+models with **Use**, upload of a model `.zip` (model update) and removal of own models;
+then save and restart the service.
+
+Own models / calibration on your cameras (on the build machine or the server with the export
+tools):
+
+```bash
+python3 tools/export_models.py --sizes 960x544 --calib ~/frames --zip --out ./models
+# → models/yolo11s_960x544_int8_openvino_model.zip – upload it in the panel
+```
+
+Comparing speed and agreement of both versions on the server, on frames from the gallery:
+
+```bash
+sudo systemctl stop szukaj_cpu@$USER
+/opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/tools/compare_models.py \
+    /opt/szukaj_cpu/models/yolo11s_960x544_openvino_model \
+    /opt/szukaj_cpu/models/yolo11s_960x544_int8_openvino_model  /path/to/gallery/miniatury
+sudo systemctl start szukaj_cpu@$USER
+```
 
 ## Web panel
 
@@ -195,21 +263,23 @@ user for the phone. In the ntfy app add the server, log in and subscribe to the 
   is sent, so older notifications keep the previous one.
 * `ntfy/docker-compose.yml` is an alternative for running ntfy in Docker.
 
-## Optional: minimal static ffmpeg
+## Static ffmpeg
 
 `tools/build_ffmpeg.sh` builds the latest stable FFmpeg with libjxl, optimised for
-`-march=skylake` (Skylake/Kaby Lake), containing only what szukaj_cpu uses. It builds in a
-Debian 13 container (Docker or Podman), so it runs on the server's glibc:
+`-march=skylake` (Skylake/Kaby Lake), containing only what szukaj_cpu uses, in a Debian 13
+container (so it runs on the server's glibc). The full package build runs it automatically
+and installs the result as `/opt/szukaj_cpu/ffmpeg`. With `ffmpeg = "auto"` the order is
+`~/.szukaj_cpu/ffmpeg` (own copy), `/opt/szukaj_cpu/ffmpeg` (bundled), then the system one –
+delete an old own copy to use the bundled build. Stand-alone:
 
 ```bash
 bash tools/build_ffmpeg.sh                      # → ./ffmpeg-szukaj/
-scp ffmpeg-szukaj/ffmpeg ffmpeg-szukaj/ffprobe USER@SERVER:~/.szukaj_cpu/
 ```
-
-With `ffmpeg = "auto"` the static build in `~/.szukaj_cpu/` is used automatically.
 
 ## Tools
 
+* `tools/export_models.py` – YOLO → OpenVINO export, FP32 and INT8 (`--calib`, `--zip`).
+* `tools/compare_models.py` – speed and detection agreement of two models on a folder of images.
 * `tools/test_przerwy.py` – measures raw OpenVINO inference time (continuous vs. with pauses,
   2 and 4 threads) to tell model speed apart from service overhead.
 
@@ -222,6 +292,7 @@ bash /opt/szukaj_cpu/uninstall.sh --package --purge # also deletes ~/.szukaj_cpu
 
 ## Notes
 
-* YOLO11 weights are downloaded from Ultralytics on first export and are licensed by
-  Ultralytics under AGPL-3.0; they are not part of this repository.
+* YOLO11 weights come from Ultralytics and are licensed under AGPL-3.0. They are not part of
+  this repository; the full package contains models exported from them (see
+  `/usr/share/doc/szukaj-cpu/MODELS.txt`).
 * Logs and comments in the program are in Polish.

@@ -19,8 +19,10 @@ gallery = ""
 # Rolling stream buffer used to cut clips — kept in RAM, no disk wear
 buffer = "/dev/shm/szukaj_cpu"
 
-# YOLO model; downloaded if missing and exported next to it for OpenVINO (once,
-# needs the export tools: sudo szukaj-cpu-export-tools install)
+# YOLO model name and directory for your own models. OpenVINO models are looked up
+# here first (e.g. ~/.szukaj_cpu/models/yolo11s_960x544_int8_openvino_model), then in
+# the package (/opt/szukaj_cpu/models). The .pt file is needed only to export a missing
+# size/version (export tools: sudo szukaj-cpu-export-tools install).
 model = "~/.szukaj_cpu/models/yolo11s.pt"
 
 # "auto" = static build from ~/.szukaj_cpu/ or /opt/szukaj_cpu/ (see
@@ -50,6 +52,12 @@ imgsz = 960
 # Shape of the model input (OpenVINO): "16:9" matches the cameras, so no time is
 # spent on grey padding (960 -> 960x544, ~40% faster than "square" 960x960)
 aspect_ratio = "16:9"
+
+# Model version (OpenVINO): "fp32" = standard, most accurate; "int8" = quantized with
+# NNCF, faster on the CPU with slightly lower accuracy. Both are included in the .deb
+# package for 960x544; if the INT8 model is missing, FP32 is used (warning in the log).
+# Can be switched in the web panel: Configuration → Model.
+precision = "fp32"
 
 # "openvino" (recommended on Intel CPUs, much faster) or "pytorch"
 engine = "openvino"

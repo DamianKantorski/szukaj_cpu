@@ -1,5 +1,7 @@
-# Po wypchnięciu tagu vX.Y.Z buduje pakiet .deb i publikuje wydanie z plikiem pakietu.
-#   git tag v1.0.1 && git push origin v1.0.1
+# Po wypchnięciu tagu vX.Y.Z buduje pełny pakiet .deb (koła Pythona, modele FP32/INT8,
+# ffmpeg) tym samym skryptem co lokalnie i publikuje wydanie z plikiem pakietu.
+#   git tag v1.2.0 && git push origin v1.2.0
+# Pierwsze budowanie trwa ~30 min (ffmpeg, eksport modeli); potem build/ jest w pamięci podręcznej.
 name: release
 
 on:
@@ -22,11 +24,23 @@ jobs:
 
       - name: Sprawdzenie składni
         run: |
-          python3 -m py_compile src/szukaj_cpu.py tools/test_przerwy.py
+          python3 -m compileall -q src tools
           for f in uninstall.sh packaging/build-deb.sh ntfy/setup-ntfy.sh tools/build_ffmpeg.sh; do bash -n "$f"; done
           for f in packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm bin/szukaj-cpu bin/szukaj-cpu-export-tools; do sh -n "$f"; done
 
-      - name: Budowa pakietu
+      - name: Pamięć podręczna (ffmpeg, modele, koła, narzędzia eksportu)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/ffmpeg
+            build/models
+            build/wheels-*
+            build/venv-export
+            build/datasets
+          key: build-${{ hashFiles('tools/build_ffmpeg.sh', 'tools/export_models.py', 'requirements.txt') }}
+          restore-keys: build-
+
+      - name: Budowa pakietu (kontener Debiana 13)
         run: bash packaging/build-deb.sh
 
       - name: Wydanie

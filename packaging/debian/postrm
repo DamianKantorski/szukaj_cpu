@@ -4,6 +4,7 @@ case "$1" in
 remove|purge)
     # środowisko Pythona utworzone przez postinst (nie należy do plików pakietu)
     rm -rf /opt/szukaj_cpu/venv
+    find /opt/szukaj_cpu -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
     find /opt/szukaj_cpu -depth -type d -empty -delete 2>/dev/null || true
     if [ "$1" = purge ]; then
         # włączone instancje usługi; konfiguracji użytkowników (~/.szukaj_cpu) nie ruszamy

@@ -1,0 +1,267 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Obszar detekcji – szukaj_cpu</title>
+<style>
+:root{--bg:#111;--card:#1b1d22;--fg:#e6e6e6;--mut:#9aa0a6;--line:#2c2f36;--zone:#4ea1ff;--crop:#ff9f2e;--ok:#4cc38a;--err:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mut);margin:0 0 14px;font-size:13.5px}
+a{color:var(--zone)}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
+select,button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:7px 12px;cursor:pointer}
+button:hover{border-color:#444}button.on{border-color:var(--zone);box-shadow:inset 0 0 0 1px var(--zone)}
+button.crop.on{border-color:var(--crop);box-shadow:inset 0 0 0 1px var(--crop)}
+button.pri{background:#24456e;border-color:#2f5a8f}button.warn{border-color:#6e3a24}
+.stage{position:relative;background:#000;border-radius:10px;overflow:hidden;touch-action:none;user-select:none}
+.stage img{display:block;width:100%;height:auto}.stage canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+.help{color:var(--mut);font-size:13px;margin:8px 0}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;overflow-x:auto;font-size:13px}
+#msg{min-height:1.4em;font-size:14px}.ok{color:var(--ok)}.err{color:var(--err)}
+.leg{display:inline-flex;align-items:center;gap:6px;color:var(--mut);font-size:13px}
+.leg i{display:inline-block;width:14px;height:3px;border-radius:2px}
+details.intro{background:var(--card);border:1px solid var(--line);border-radius:10px;margin:12px 0;padding:0 14px}
+details.intro summary{cursor:pointer;padding:11px 0;font-weight:600}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;padding-bottom:12px}
+@media(max-width:720px){.cards{grid-template-columns:1fr}}
+.card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#15171b}
+.card h3{margin:0 0 6px;font-size:15px}
+.card h3 i{width:14px;height:3px;border-radius:2px;display:inline-block;vertical-align:middle;margin-right:8px}
+.card p,.card li{font-size:13.5px;color:#c9ccd1;margin:4px 0}.card ul{margin:4px 0;padding-left:18px}
+.card svg{display:block;width:100%;max-width:260px;height:auto;margin:6px 0;border-radius:6px}
+.tip{font-size:13.5px;color:#c9ccd1;padding-bottom:12px;margin:0}
+#info{font-size:13.5px;margin:6px 0;padding:8px 12px;border-left:3px solid var(--line);background:var(--card);border-radius:0 8px 8px 0}
+#info b{color:var(--fg)}#info .w{color:#ffc46b}
+header.top{border-bottom:1px solid var(--line)}
+.topin{max-width:1100px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:16px;margin-right:6px}
+nav.tabs{display:flex;gap:4px}
+nav.tabs a{padding:6px 12px;border-radius:8px;text-decoration:none;color:var(--mut);border:1px solid transparent}
+nav.tabs a.on{color:var(--fg);background:var(--card);border-color:var(--line)}
+nav.tabs a:hover{color:var(--fg)}.gal{margin-left:auto;font-size:14px}
+@media(max-width:820px){.gal{margin-left:0}}
+</style></head><body>
+<header class="top"><div class="topin">
+ <span class="brand">szukaj_cpu</span>
+ <nav class="tabs"><a href="/admin/" class="on">Obszar detekcji</a><a href="/admin/config">Konfiguracja</a></nav>
+ <a class="gal" href="/">← galeria</a>
+</div></header><main>
+<h1>Obszar detekcji kamer</h1>
+<p class="sub">Zmiany działają od razu po zapisie i trafiają do pliku konfiguracji.</p>
+<div class="bar">
+  <select id="cam"></select>
+  <button id="mZone" class="on">Strefa (wielokąt)</button>
+  <button id="mCrop" class="crop">Przycięcie obrazu (prostokąt)</button>
+  <button id="refresh">↻ Odśwież obraz</button>
+  <span class="leg"><i style="background:var(--zone)"></i>strefa</span>
+  <span class="leg"><i style="background:var(--crop)"></i>przycięcie</span>
+</div>
+<details class="intro" id="intro" open>
+<summary>Co to jest strefa i przycięcie? (kliknij, aby zwinąć)</summary>
+<div class="cards">
+ <div class="card">
+  <h3><i style="background:var(--zone)"></i>Strefa – <em>gdzie</em> osoba ma się liczyć</h3>
+  <svg viewBox="0 0 260 120" aria-hidden="true"><rect width="260" height="120" fill="#000"/>
+   <polygon points="40,50 220,40 250,118 10,118" fill="rgba(78,161,255,.18)" stroke="#4ea1ff" stroke-width="2"/>
+   <g fill="#e6e6e6"><circle cx="70" cy="22" r="5"/><rect x="65" y="28" width="10" height="20" rx="3"/></g>
+   <g fill="#4cc38a"><circle cx="150" cy="62" r="6"/><rect x="144" y="69" width="12" height="26" rx="3"/></g>
+   <text x="88" y="38" fill="#9aa0a6" font-size="11">poza strefą – pomijana</text>
+   <text x="104" y="110" fill="#4cc38a" font-size="11">w strefie – alarm</text></svg>
+  <ul><li>Model nadal analizuje <b>cały kadr</b>; strefa tylko filtruje wyniki.</li>
+   <li>Liczy się miejsce <b>stóp</b> osoby (dół ramki), więc obrysuj podłoże: podjazd, ścieżkę, furtkę.</li>
+   <li>Do czego: pomijanie przechodniów na chodniku i ulicy, sąsiedniej posesji.</li>
+   <li>Brak strefy = liczy się cały kadr.</li></ul>
+ </div>
+ <div class="card">
+  <h3><i style="background:var(--crop)"></i>Przycięcie – <em>co</em> model w ogóle ogląda</h3>
+  <svg viewBox="0 0 260 120" aria-hidden="true"><rect width="260" height="120" fill="#000"/>
+   <rect x="0" y="0" width="260" height="120" fill="rgba(0,0,0,.55)"/>
+   <rect x="120" y="10" width="130" height="80" fill="#0d1a26" stroke="#ff9f2e" stroke-width="2" stroke-dasharray="7 5"/>
+   <g fill="#e6e6e6"><circle cx="185" cy="38" r="4"/><rect x="181" y="43" width="8" height="15" rx="2"/></g>
+   <g fill="#555"><circle cx="50" cy="60" r="6"/><rect x="44" y="67" width="12" height="26" rx="3"/></g>
+   <text x="8" y="112" fill="#9aa0a6" font-size="11">poza prostokątem – niewidoczne</text>
+   <text x="126" y="84" fill="#ffb35c" font-size="11">powiększony fragment</text></svg>
+  <ul><li>Do modelu trafia <b>tylko fragment</b> w prostokącie, poza nim nikt nie zostanie wykryty.</li>
+   <li>Mniejszy fragment jest powiększany, więc <b>dalekie, małe postacie</b> wykrywa się lepiej.</li>
+   <li>Powiększenie działa, gdy prostokąt jest wyraźnie <b>węższy</b> od kadru; pas na całą szerokość nic nie powiększa.</li>
+   <li>Brak przycięcia = model ogląda cały kadr (zalecane na start).</li></ul>
+ </div>
+</div>
+<p class="tip"><b>Którą wybrać?</b> Chcesz ignorować ulicę, chodnik lub sąsiada? Użyj <b>strefy</b>. Interesuje Cię odległy fragment (np. furtka w głębi kadru) i osoby są tam za małe? Użyj <b>przycięcia</b>. Można łączyć oba: strefa działa wtedy w obrębie przyciętego fragmentu. Po zapisie sprawdź w galerii, czy zdarzenia się pojawiają.</p>
+</details>
+<div class="stage" id="stage"><img id="img" alt=""><canvas id="cv"></canvas></div>
+<p class="help" id="help"></p>
+<div id="info"></div>
+<div class="bar">
+  <button id="undo">Cofnij punkt</button>
+  <button id="clearZone">Usuń strefę</button>
+  <button id="clearCrop">Cały kadr (bez przycięcia)</button>
+  <span style="flex:1"></span>
+  <button id="save" class="pri">Zapisz i zastosuj</button>
+  <button id="restart" class="warn">Restart usługi</button>
+</div>
+<div id="msg"></div>
+<pre id="toml"></pre>
+</main><script>
+const $ = id => document.getElementById(id);
+const HELP = {
+  zone: "Kliknij, aby dodać narożnik strefy. Przeciągnij punkt, aby go przesunąć; prawy przycisk na punkcie usuwa go. Liczą się osoby, których stopy (dół ramki) są w strefie.",
+  crop: "Przeciągnij, aby zaznaczyć prostokąt – model analizuje tylko ten fragment kadru (większe postacie = lepsza wykrywalność w oddali). Przeciągnij narożnik, aby zmienić rozmiar."
+};
+let model = null;
+let cams = [], cam = null, mode = "zone", zone = [], crop = null, drag = null, restartOk = false;
+const cv = $("cv"), ctx = cv.getContext("2d"), img = $("img");
+const r4 = v => Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
+function msg(t, cls) { $("msg").textContent = t; $("msg").className = cls || ""; }
+async function api(path, body) {
+  const o = body ? {method: "POST", headers: {"Content-Type": "application/json", "X-Szukaj": "1"}, body: JSON.stringify(body)} : {};
+  const r = await fetch(path, o);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status + " " + r.statusText);
+  return j;
+}
+function tomlText() {
+  const z = zone.length >= 3 ? "[" + zone.map(p => `[${r4(p[0])}, ${r4(p[1])}]`).join(", ") + "]" : "[]";
+  const c = crop ? `[${crop.map(r4).join(", ")}]` : "[]";
+  return `# [[camera]] name = "${cam ? cam.name : ""}"
+zone = ${z}
+crop = ${c}`;
+}
+function size() { const b = img.getBoundingClientRect(); cv.width = b.width * devicePixelRatio; cv.height = b.height * devicePixelRatio; }
+function draw() {
+  size();
+  const W = cv.width, H = cv.height, d = devicePixelRatio;
+  ctx.clearRect(0, 0, W, H);
+  if (crop) {
+    const [x1, y1, x2, y2] = [crop[0] * W, crop[1] * H, crop[2] * W, crop[3] * H];
+    ctx.fillStyle = "rgba(0,0,0,.55)";
+    ctx.fillRect(0, 0, W, y1); ctx.fillRect(0, y2, W, H - y2); ctx.fillRect(0, y1, x1, y2 - y1); ctx.fillRect(x2, y1, W - x2, y2 - y1);
+    ctx.setLineDash([8 * d, 6 * d]); ctx.strokeStyle = "#ff9f2e"; ctx.lineWidth = 2 * d; ctx.strokeRect(x1, y1, x2 - x1, y2 - y1); ctx.setLineDash([]);
+    if (mode === "crop") for (const [x, y] of [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]) { ctx.fillStyle = "#ff9f2e"; ctx.fillRect(x - 5 * d, y - 5 * d, 10 * d, 10 * d); }
+  }
+  if (zone.length) {
+    ctx.beginPath(); zone.forEach(([x, y], i) => i ? ctx.lineTo(x * W, y * H) : ctx.moveTo(x * W, y * H));
+    if (zone.length >= 3) { ctx.closePath(); ctx.fillStyle = "rgba(78,161,255,.15)"; ctx.fill(); }
+    ctx.strokeStyle = "#4ea1ff"; ctx.lineWidth = 2 * d; ctx.stroke();
+    zone.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(x * W, y * H, (mode === "zone" ? 6 : 3) * d, 0, 7); ctx.fillStyle = "#4ea1ff"; ctx.fill(); });
+  }
+  $("toml").textContent = tomlText();
+  info();
+}
+function pct(v) { return Math.round(v * 100) + "%"; }
+function info() {
+  const out = [];
+  if (zone.length >= 3) out.push(`<b>Strefa:</b> alarm tylko dla osób stojących w niebieskim obszarze.`);
+  else if (zone.length) out.push(`<b>Strefa:</b> <span class="w">dodaj jeszcze ${3 - zone.length} pkt (min. 3), inaczej nie zostanie zapisana.</span>`);
+  else out.push(`<b>Strefa:</b> brak – liczy się cały ${crop ? "przycięty fragment" : "kadr"}.`);
+  if (crop) {
+    const cw = crop[2] - crop[0], ch = crop[3] - crop[1];
+    let s = `<b>Przycięcie:</b> model widzi ${pct(cw)} szerokości × ${pct(ch)} wysokości kadru; <span class="w">osoby poza pomarańczowym prostokątem nie będą wykrywane.</span>`;
+    const W = img.naturalWidth, H = img.naturalHeight;
+    if (model && W && H) {
+      const g = Math.min(model[0] / (cw * W), model[1] / (ch * H)) / Math.min(model[0] / W, model[1] / H);
+      s += g < 1.15
+        ? ` Powiększenie ×${g.toFixed(1)}: <span class="w">postacie będą praktycznie tej samej wielkości co bez przycięcia. Zwęź prostokąt w poziomie, aby zyskać na wykrywalności, albo do samego ograniczania obszaru użyj strefy.</span>`
+        : ` Powiększenie ×${g.toFixed(1)}: postacie w tym fragmencie są dla modelu ${g.toFixed(1)}× większe niż przy całym kadrze.`;
+    }
+    out.push(s);
+  } else out.push(`<b>Przycięcie:</b> brak – model ogląda cały kadr.`);
+  $("info").innerHTML = out.join("<br>");
+}
+function pos(e) { const b = cv.getBoundingClientRect(); return [(e.clientX - b.left) / b.width, (e.clientY - b.top) / b.height]; }
+function near(p, q, px) { const b = cv.getBoundingClientRect(); return Math.hypot((p[0] - q[0]) * b.width, (p[1] - q[1]) * b.height) < px; }
+cv.addEventListener("contextmenu", e => {
+  e.preventDefault();
+  if (mode !== "zone") return;
+  const p = pos(e), i = zone.findIndex(q => near(p, q, 12));
+  if (i >= 0) { zone.splice(i, 1); draw(); }
+});
+cv.addEventListener("pointerdown", e => {
+  if (e.button === 2) return;
+  cv.setPointerCapture(e.pointerId);
+  const p = pos(e);
+  if (mode === "zone") {
+    const i = zone.findIndex(q => near(p, q, 14));
+    if (i >= 0) drag = {t: "pt", i}; else { zone.push(p); drag = {t: "pt", i: zone.length - 1}; }
+  } else {
+    if (crop) {
+      const cs = [[crop[0], crop[1]], [crop[2], crop[1]], [crop[2], crop[3]], [crop[0], crop[3]]];
+      const k = cs.findIndex(q => near(p, q, 16));
+      if (k >= 0) { drag = {t: "rect", ax: cs[(k + 2) % 4][0], ay: cs[(k + 2) % 4][1]}; draw(); return; }
+    }
+    drag = {t: "rect", ax: p[0], ay: p[1]}; crop = [p[0], p[1], p[0], p[1]];
+  }
+  draw();
+});
+cv.addEventListener("pointermove", e => {
+  if (!drag) return;
+  const [x, y] = pos(e).map(v => Math.min(1, Math.max(0, v)));
+  if (drag.t === "pt") zone[drag.i] = [x, y];
+  else crop = [Math.min(drag.ax, x), Math.min(drag.ay, y), Math.max(drag.ax, x), Math.max(drag.ay, y)];
+  draw();
+});
+cv.addEventListener("pointerup", () => {
+  if (drag && drag.t === "rect" && crop && (crop[2] - crop[0] < 0.05 || crop[3] - crop[1] < 0.05)) { crop = null; msg("Za mały prostokąt – min. 5% kadru.", "err"); }
+  drag = null; draw();
+});
+function setMode(m) {
+  mode = m; $("mZone").classList.toggle("on", m === "zone"); $("mCrop").classList.toggle("on", m === "crop");
+  $("help").textContent = HELP[m]; $("undo").disabled = m !== "zone"; draw();
+}
+function loadCam() {
+  cam = cams.find(c => c.name === $("cam").value);
+  zone = (cam.zone || []).map(p => [...p]); crop = cam.crop && cam.crop.length ? [...cam.crop] : null;
+  loadImg(); msg("");
+}
+function loadImg() {
+  img.onerror = () => msg("Brak podglądu – kamera jeszcze nie dostarczyła klatki. Spróbuj za chwilę.", "err");
+  img.onload = draw;
+  img.src = "/api/snapshot?cam=" + encodeURIComponent(cam.name) + "&t=" + Date.now();
+}
+$("mZone").onclick = () => setMode("zone");
+$("mCrop").onclick = () => setMode("crop");
+$("refresh").onclick = loadImg;
+$("undo").onclick = () => { zone.pop(); draw(); };
+$("clearZone").onclick = () => { zone = []; draw(); };
+$("clearCrop").onclick = () => { crop = null; draw(); };
+$("cam").onchange = loadCam;
+$("save").onclick = async () => {
+  if (zone.length && zone.length < 3) return msg("Strefa musi mieć co najmniej 3 punkty (albo usuń ją).", "err");
+  try {
+    const j = await api("/api/area", {camera: cam.name, zone: zone.length >= 3 ? zone.map(p => p.map(r4)) : [], crop: crop ? crop.map(r4) : []});
+    cam.zone = zone.map(p => [...p]); cam.crop = crop ? [...crop] : [];
+    msg("Zapisano i zastosowano. Plik konfiguracji zaktualizowany (kopia: .bak).", "ok");
+  } catch (e) { msg("Błąd zapisu: " + e.message, "err"); }
+};
+$("restart").onclick = async () => {
+  if (!restartOk) return msg("Restart z poziomu WWW działa tylko, gdy szukaj_cpu jest uruchomione jako usługa systemd.", "err");
+  if (!confirm("Zrestartować usługę szukaj_cpu? Analiza zatrzyma się na ok. 20 s.")) return;
+  try { await api("/api/restart", {}); } catch (e) { return msg("Błąd: " + e.message, "err"); }
+  msg("Restart… (ok. 20 s)");
+  const t0 = Date.now();
+  await new Promise(r => setTimeout(r, 4000));
+  const poll = async () => {
+    try { const s = await api("/api/status"); if (s.started * 1000 > t0 - 1000) return msg("Usługa uruchomiona ponownie.", "ok"); } catch (e) {}
+    if (Date.now() - t0 > 120000) return msg("Usługa nie wróciła w 2 min – sprawdź: journalctl -u szukaj_cpu@…", "err");
+    setTimeout(poll, 2000);
+  };
+  poll();
+};
+window.addEventListener("resize", draw);
+(async () => {
+  try {
+    const j = await api("/api/cameras");
+    cams = j.cameras; restartOk = j.restart; model = j.model || null;
+    try { if (localStorage.getItem("szukaj_intro") === "0") $("intro").open = false; } catch (e) {}
+    $("intro").addEventListener("toggle", () => { try { localStorage.setItem("szukaj_intro", $("intro").open ? "1" : "0"); } catch (e) {} });
+    $("cam").innerHTML = cams.map(c => `<option>${c.name}</option>`).join("");
+    const want = decodeURIComponent((location.hash.match(/cam=([^&]+)/) || [])[1] || "");
+    if (cams.some(c => c.name === want)) $("cam").value = want;
+    window.addEventListener("hashchange", () => {
+      const w = decodeURIComponent((location.hash.match(/cam=([^&]+)/) || [])[1] || "");
+      if (cams.some(c => c.name === w)) { $("cam").value = w; loadCam(); }
+    });
+    if (!restartOk) $("restart").title = "Dostępne tylko przy uruchomieniu przez systemd";
+    setMode("zone"); loadCam();
+  } catch (e) { msg("Nie udało się wczytać kamer: " + e.message, "err"); }
+})();
+</script></body></html>

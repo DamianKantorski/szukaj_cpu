@@ -12,7 +12,7 @@ User=%i
 SupplementaryGroups=render video
 # ~ = katalog domowy użytkownika z User=; konfiguracja: ~/.szukaj_cpu/szukaj_cpu.toml
 WorkingDirectory=~
-ExecStart=/opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/szukaj_cpu.py
+ExecStart=/opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/run.py
 Environment=PYTHONUNBUFFERED=1
 # glibc malloc: duże bufory klatek (kilka MB) zawsze przez mmap i zwracane do systemu,
 # mniej aren – bez tego pamięć procesu rośnie przez fragmentację przy długiej pracy
