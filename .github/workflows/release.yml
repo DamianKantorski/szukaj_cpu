@@ -37,7 +37,7 @@ jobs:
             build/wheels-*
             build/venv-export
             build/datasets
-          key: build-${{ hashFiles('tools/build_ffmpeg.sh', 'tools/export_models.py', 'requirements.txt') }}
+          key: build-${{ hashFiles('tools/build_ffmpeg.sh', 'tools/export_models.py', 'src/szukaj_cpu/export.py', 'requirements.txt') }}
           restore-keys: build-
 
       - name: Budowa pakietu (kontener Debiana 13)

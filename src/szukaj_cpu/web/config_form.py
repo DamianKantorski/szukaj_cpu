@@ -74,8 +74,8 @@ FORM = [
           "Gdy z kamery nie przychodzi klatka przez tyle sekund, usługa łączy się ponownie.", min=5, max=600, unit="s"),
     ]},
     {"id": "model", "section": "detection", "title": "Model",
-     "desc": "Model YOLO i jego wersja. INT8 jest szybszy; jeśli wykrywanie pogorszy się (np. w nocy), "
-             "przełącz na FP32 i zrestartuj usługę.",
+     "desc": "Model YOLO (YOLO11 albo nowszy YOLO26) i jego wersja. INT8 jest szybszy; jeśli wykrywanie "
+             "pogorszy się (np. w nocy), przełącz na FP32 albo na drugi model i zrestartuj usługę.",
      "fields": [
         F("precision", "Wersja modelu", "select", "fp32",
           "INT8 = model skwantyzowany (NNCF): szybsza analiza, minimalnie niższa dokładność. "

@@ -74,14 +74,14 @@ The full package contains everything that used to be downloaded during installat
 server needs no internet access to install it:
 
 * Python wheels (OpenVINO, OpenCV, NumPy) for Debian 13's Python – installed offline,
-* YOLO11s OpenVINO models, **FP32 and INT8**, for `MODEL_SIZES` (default `960x544`),
+* YOLO11s and YOLO26s OpenVINO models, **FP32 and INT8**, for `MODEL_SIZES` (default `960x544`),
 * `ffmpeg`/`ffprobe` compiled on the build machine (`tools/build_ffmpeg.sh`, `-march=skylake`).
 
 Everything is built in a Debian 13 container, so the build machine only needs Docker or
 Podman (e.g. CachyOS: `sudo pacman -S podman`; WSL/Ubuntu: `sudo apt install podman`):
 
 ```bash
-bash packaging/build-deb.sh                     # → dist/szukaj-cpu_1.2.0_amd64.deb
+bash packaging/build-deb.sh                     # → dist/szukaj-cpu_1.3.0_amd64.deb
 bash packaging/build-deb.sh --calib ~/frames    # INT8 calibrated on frames from your cameras
 MODEL_SIZES="960x544 640x384" bash packaging/build-deb.sh
 bash packaging/build-deb.sh --slim              # program only; install downloads dependencies
@@ -95,7 +95,7 @@ for the export, quantization), later builds take a minute. `--rebuild-ffmpeg`,
 ### Installing
 
 ```bash
-sudo apt install ./szukaj-cpu_1.2.0_amd64.deb
+sudo apt install ./szukaj-cpu_1.3.0_amd64.deb
 szukaj-cpu --init                       # creates ~/.szukaj_cpu/szukaj_cpu.toml
 nano ~/.szukaj_cpu/szukaj_cpu.toml      # cameras, gallery path, Shinobi, ntfy (or use the web panel)
 sudo usermod -aG render,video $USER     # iGPU access (log in again)
@@ -112,7 +112,7 @@ install falls back to downloading them from PyPI.
 ```bash
 bash uninstall.sh          # stops szukaj_cpu.service, moves config, models and static
                            # ffmpeg to ~/.szukaj_cpu, removes ~/szukaj_cpu
-sudo apt install ./szukaj-cpu_1.2.0_amd64.deb
+sudo apt install ./szukaj-cpu_1.3.0_amd64.deb
 sudo systemctl enable --now szukaj_cpu@$USER
 ```
 
@@ -158,7 +158,17 @@ departure and movement still raise events. The list survives restarts
   Smaller area = people appear larger to the model, so distant figures are detected better.
   `[]` = whole frame.
 
-## Models: FP32 and INT8
+## Models: YOLO11 / YOLO26, FP32 / INT8
+
+Two model families are bundled, chosen by the file name in `[paths] model`:
+
+* `yolo11s.pt` – YOLO11s, the proven default;
+* `yolo26s.pt` – YOLO26s (Ultralytics, January 2026), exported as an end-to-end (NMS-free)
+  model: its output is already the final boxes, which szukaj_cpu reads directly.
+
+On coco128 (build report) both are practically equal: recall 53.9 % vs 53.3 % and precision
+95.2 % vs 95.7 % at confidence 0.5, similar speed. Which one suits your cameras better –
+check on the server with `tools/compare_models.py` and in the gallery.
 
 `[detection] precision` selects the model version:
 
@@ -172,8 +182,8 @@ and then in `/opt/szukaj_cpu/models` (bundled). If the INT8 model for the config
 size is missing, FP32 is used and a warning is logged. If no model exists at all, the
 service exports it (needs `sudo szukaj-cpu-export-tools install`).
 
-Switching in the web panel: **Configuration → Model** – version selector, list of available
-models with **Use**, upload of a model `.zip` (model update) and removal of own models;
+Switching in the web panel: **Configuration → Model** – model (YOLO11/YOLO26) and version
+selectors, list of available models with **Use**, upload of a model `.zip` (model update) and removal of own models;
 then save and restart the service.
 
 Own models / calibration on your cameras (on the build machine or the server with the export
@@ -184,13 +194,14 @@ python3 tools/export_models.py --sizes 960x544 --calib ~/frames --zip --out ./mo
 # → models/yolo11s_960x544_int8_openvino_model.zip – upload it in the panel
 ```
 
-Comparing speed and agreement of both versions on the server, on frames from the gallery:
+Comparing two models (speed and agreement; with YOLO-format labels next to the images also
+recall/precision) on the server, on frames from the gallery – e.g. YOLO11s vs YOLO26s INT8:
 
 ```bash
 sudo systemctl stop szukaj_cpu@$USER
 /opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/tools/compare_models.py \
-    /opt/szukaj_cpu/models/yolo11s_960x544_openvino_model \
-    /opt/szukaj_cpu/models/yolo11s_960x544_int8_openvino_model  /path/to/gallery/miniatury
+    /opt/szukaj_cpu/models/yolo11s_960x544_int8_openvino_model \
+    /opt/szukaj_cpu/models/yolo26s_960x544_int8_openvino_model  /path/to/gallery/miniatury
 sudo systemctl start szukaj_cpu@$USER
 ```
 

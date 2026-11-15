@@ -43,9 +43,18 @@ def export_one(pt, w, h, int8, out_dir, calib=None, force=False):
         local = Path(td) / Path(pt).name
         shutil.copy2(pt, local)
         model = YOLO(str(local))
-        kw = {"format": "openvino", "imgsz": [h, w], "half": False}
+        kw = {"format": "openvino", "imgsz": [h, w]}
+        try:                                       # nowsze Ultralytics: quantize zamiast half/int8
+            from ultralytics.cfg import DEFAULT_CFG_DICT
+            new_api = "quantize" in DEFAULT_CFG_DICT
+        except ImportError:
+            new_api = False
+        head = model.model.model[-1] if hasattr(model.model, "model") else None
+        if getattr(head, "one2one_cv2", None) is not None:
+            # YOLO26: głowica bez NMS (end-to-end) – gotowe ramki [x1, y1, x2, y2, pewność, klasa]
+            kw["nms"] = False
         if int8:
-            kw["int8"] = True
+            kw.update({"quantize": 8} if new_api else {"int8": True})
             kw["data"] = calib_yaml(calib, model.names, td) if calib else "coco128.yaml"
         out = Path(model.export(**kw))
         tmp = dst.with_name(dst.name + ".tmp")

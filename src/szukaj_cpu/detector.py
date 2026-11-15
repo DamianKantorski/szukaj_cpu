@@ -95,6 +95,13 @@ class OpenVinoYolo:
         self.compiled = core.compile_model(core.read_model(xml), "CPU", props)
         self.req = self.compiled.create_infer_request()
         self.out = self.compiled.output(0)
+        try:
+            oshape = list(self.out.get_partial_shape())
+        except AttributeError:
+            oshape = []
+        # YOLO26 (end-to-end, bez NMS): [1, 300, 6] = x1, y1, x2, y2, pewność, klasa
+        # YOLO11 i starsze: [1, 4 + klasy, N] = cx, cy, w, h, pewności klas -> NMS w OpenCV
+        self.end2end = len(oshape) == 3 and oshape[2].is_static and oshape[2].get_length() == 6
         _, _, self.in_h, self.in_w = [int(d) for d in self.compiled.input(0).shape]
         self.names = read_names(model_dir)
         self.iou, self.max_det = iou, max_det
@@ -110,7 +117,10 @@ class OpenVinoYolo:
                                  cv2.BORDER_CONSTANT, value=(114, 114, 114))
         blob = np.ascontiguousarray(img[:, :, ::-1].transpose(2, 0, 1))[None].astype(np.float32) * (1 / 255.0)
 
-        pred = self.req.infer({0: blob})[self.out][0].T          # (N, 4 + liczba klas)
+        out = self.req.infer({0: blob})[self.out][0]
+        if self.end2end:
+            return self._end2end(out, classes, conf, r, left, top, w, h)
+        pred = out.T                                             # (N, 4 + liczba klas)
         scores = pred[:, 4:][:, classes]
         k = scores.argmax(1)
         best = scores[np.arange(len(scores)), k]
@@ -130,6 +140,18 @@ class OpenVinoYolo:
             x, y, ww, hh = rects[i]
             res.append((int(max(0, x)), int(max(0, y)), int(min(w - 1, x + ww)), int(min(h - 1, y + hh)),
                         float(best[i]), self.names.get(int(cls_ids[i]), str(cls_ids[i]))))
+        return res
+
+
+    def _end2end(self, out, classes, conf, r, left, top, w, h):
+        cls_ids = out[:, 5].astype(int)
+        keep = (out[:, 4] >= conf) & np.isin(cls_ids, classes)
+        res = []
+        for (x1, y1, x2, y2, sc, _), k in zip(out[keep][: self.max_det], cls_ids[keep][: self.max_det]):
+            x1, x2 = (x1 - left) / r, (x2 - left) / r
+            y1, y2 = (y1 - top) / r, (y2 - top) / r
+            res.append((int(max(0, x1)), int(max(0, y1)), int(min(w - 1, x2)), int(min(h - 1, y2)),
+                        float(sc), self.names.get(int(k), str(k))))
         return res
 
 
