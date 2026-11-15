@@ -19,7 +19,8 @@ gallery = ""
 # Rolling stream buffer used to cut clips — kept in RAM, no disk wear
 buffer = "/dev/shm/szukaj_cpu"
 
-# YOLO model name and directory for your own models. OpenVINO models are looked up
+# YOLO model: yolo11s (proven) or yolo26s (newer, NMS-free) – both are in the package.
+# The file name selects the model; the directory is where your own models are kept. OpenVINO models are looked up
 # here first (e.g. ~/.szukaj_cpu/models/yolo11s_960x544_int8_openvino_model), then in
 # the package (/opt/szukaj_cpu/models). The .pt file is needed only to export a missing
 # size/version (export tools: sudo szukaj-cpu-export-tools install).

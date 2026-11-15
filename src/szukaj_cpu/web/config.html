@@ -102,6 +102,7 @@ table.models td.act{text-align:right;white-space:nowrap}
 @media(max-width:820px){table.models .mono{display:none}table.models th:nth-child(4),table.models td:nth-child(4){display:none}table.models td{padding:6px 4px}table.models td.act{white-space:normal}}
 .tag.on{border-color:#2f8a5a;color:#7fe0ad}.tag.sel{border-color:#2f6fb8;color:#8cc0ff}
 .tag.int8{border-color:#8a6a2f;color:#ffd38a}.tag.fp32{border-color:#4a4f58;color:#c9ccd1}
+.fam{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .upl{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px}
 label.btn{display:inline-block;cursor:pointer;border:1px solid var(--line);border-radius:8px;background:var(--card2);padding:4px 10px;font-size:13px}
 label.btn:hover{border-color:#4a4f58}
@@ -464,11 +465,25 @@ function drawModels() {
         ${m.source === "user" && !m.active ? `<button type="button" class="sm warn" data-mdel="${esc(m.name)}">Usuń</button>` : ""}</td></tr>`;
   }).join("");
   el.className = "";
-  el.innerHTML = `<div class="mstat">${status}${run.name ? `<br><span class="hint">Działa teraz: ${esc(run.name)}${run.note ? " – " + esc(run.note) : ""}</span>` : ""}</div>
+  const stems = [...new Set(MODELS.models.map(m => m.stem))].sort();
+  if (!stems.includes(want.stem)) stems.push(want.stem);
+  const nice = st => st.replace(/^yolo/i, "YOLO");
+  const fam = st => /yolo26/i.test(st) ? `${nice(st)} – nowszy, bez NMS` : /yolo11/i.test(st) ? `${nice(st)} – sprawdzony` : st;
+  const famSel = `<div class="fam"><label for="mstem"><b>Model</b></label>
+    <select id="mstem">${stems.map(st => `<option value="${esc(st)}" ${st === want.stem ? "selected" : ""}>${esc(fam(st))}</option>`).join("")}</select>
+    <span class="hint">zmienia <code>paths.model</code>; wersja (FP32/INT8) i rozmiar to osobne pola</span></div>`;
+  el.innerHTML = famSel + `<div class="mstat">${status}${run.name ? `<br><span class="hint">Działa teraz: ${esc(run.name)}${run.note ? " – " + esc(run.note) : ""}</span>` : ""}</div>
     ${MODELS.models.length ? `<div class="tblwrap"><table class="models"><thead><tr><th>Model</th><th>Wersja</th><th>Źródło</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="hint">Nie znaleziono żadnego modelu OpenVINO.</p>'}
     <div class="upl"><label class="btn sm" for="mfile">Wgraj model (.zip)…</label><input type="file" id="mfile" accept=".zip,application/zip" hidden>
       <span class="hint" id="mup">Aktualizacja modelu: paczkę .zip tworzy <code>tools/export_models.py --zip</code> na komputerze budującym. Trafi do ${esc(MODELS.user_dir)}.</span></div>`;
   $("mfile").onchange = e => uploadModel(e.target.files[0]);
+  $("mstem").onchange = e => setStem(e.target.value);
+}
+function setStem(stem) {
+  if (stemOf(cur.values.paths.model) === stem) return;
+  const p = String(cur.values.paths.model || "~/.szukaj_cpu/models/x.pt");
+  cur.values.paths.model = p.slice(0, p.lastIndexOf("/") + 1) + stem + ".pt";
+  renderPane(FORM.find(g => g.id === "paths")); changed();
 }
 function uploadModel(file) {
   if (!file) return;
@@ -491,11 +506,7 @@ document.addEventListener("click", async e => {
     const m = MODELS.models.find(x => x.name === b.dataset.use);
     const d = cur.values.detection;
     d.precision = m.precision; d.imgsz = Math.max(m.w, m.h); d.aspect_ratio = arOf(m.w, m.h); d.engine = "openvino";
-    if (stemOf(cur.values.paths.model) !== m.stem) {
-      const p = String(cur.values.paths.model || "~/.szukaj_cpu/models/x.pt");
-      cur.values.paths.model = p.slice(0, p.lastIndexOf("/") + 1) + m.stem + ".pt";
-      renderPane(FORM.find(g => g.id === "paths"));
-    }
+    setStem(m.stem);
     renderPane(FORM.find(g => g.id === "model")); changed();
     $("state").textContent += " – wybrano model, zapisz i zrestartuj usługę";
   }

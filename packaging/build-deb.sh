@@ -4,7 +4,7 @@
 #
 #  Pełny pakiet (domyślnie) zawiera wszystko, co wcześniej instalacja pobierała z sieci:
 #    • koła Pythona (OpenVINO, OpenCV, NumPy) dla Pythona z Debiana 13 – instalacja offline,
-#    • modele YOLO OpenVINO: FP32 i INT8 (kwantyzacja NNCF) dla MODEL_SIZES,
+#    • modele YOLO OpenVINO (MODELS: YOLO11s i YOLO26s): FP32 i INT8 (NNCF) dla MODEL_SIZES,
 #    • ffmpeg/ffprobe skompilowane na tym komputerze (tools/build_ffmpeg.sh, -march=$MARCH).
 #  Wszystko powstaje w kontenerze Debiana 13 (Docker albo Podman), więc na komputerze
 #  budującym (np. CachyOS, WSL) wystarczy kontener – bez Pythona, dpkg ani kompilatorów.
@@ -20,7 +20,7 @@
 #    --no-container      buduj bez kontenera (Debian 13 albo zgodny system z apt)
 #    --no-ffmpeg | --no-models | --no-wheels   pomiń składnik
 #  Zmienne:
-#    MODEL_SIZES="960x544 640x384"  MODEL=yolo11s.pt  MARCH=skylake  JOBS=…  LTO=1
+#    MODELS="yolo11s.pt yolo26s.pt"  MODEL_SIZES="960x544 640x384"  MARCH=skylake  JOBS=…  LTO=1
 #    FFMPEG_VERSION=n8.0  JXL_VERSION=v0.11.1   (domyślnie najnowsze wydania)
 #    IMAGE=debian:trixie   BUILD_CA_CERT=/ścieżka/ca.crt (gdy sieć ma własny certyfikat proxy)
 # ════════════════════════════════════════════════════════════════════════════
@@ -29,7 +29,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="${IMAGE:-debian:trixie}"
 MODEL_SIZES="${MODEL_SIZES:-960x544}"
-MODEL="${MODEL:-yolo11s.pt}"
+MODELS="${MODELS:-${MODEL:-yolo11s.pt yolo26s.pt}}"
 MARCH="${MARCH:-skylake}"
 
 SLIM=0 INSIDE=0 NO_CONTAINER=0 CALIB=""
@@ -69,7 +69,7 @@ if [ "$INSIDE" = 0 ] && [ "$NO_CONTAINER" = 0 ] && { [ "$FULL" = 1 ] || ! comman
     fi
     mkdir -p "$B"
     VOL=(-v "$ROOT:/src")
-    ENVS=(-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e MODEL_SIZES="$MODEL_SIZES" -e MODEL="$MODEL"
+    ENVS=(-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e MODEL_SIZES="$MODEL_SIZES" -e MODELS="$MODELS"
           -e MARCH="$MARCH" -e JOBS="${JOBS:-}" -e LTO="${LTO:-0}"
           -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}")
     INNER=()
@@ -130,7 +130,7 @@ if [ "$DO_WHEELS" = 1 ]; then
 fi
 
 # ── 2. modele YOLO: FP32 + INT8 ──
-MODELS="$B/models"
+MDIR="$B/models"
 if [ "$DO_MODELS" = 1 ]; then
     VX="$B/venv-export"
     [ "$INSIDE" = 1 ] || VX="$B/venv-export-native"
@@ -147,20 +147,31 @@ if [ "$DO_MODELS" = 1 ]; then
     # coco128: kalibracja INT8 (gdy brak --calib) i raport porównania
     "$VX/bin/python" -c "from ultralytics.data.utils import check_det_dataset; check_det_dataset('coco128.yaml')" \
         >/dev/null 2>&1 || echo "    (nie udało się pobrać coco128 – raport porównania zostanie pominięty)"
-    [ "$RB_MODELS" = 1 ] && find "$MODELS" -maxdepth 1 -name '*_openvino_model' -exec rm -rf {} +
-    mkdir -p "$MODELS"
-    (cd "$MODELS" && "$VX/bin/python" "$ROOT/tools/export_models.py" --model "$MODEL" --out "$MODELS" \
-        --sizes $MODEL_SIZES ${CALIB:+--calib "$CALIB"} 2>&1 | grep -vE "^INFO:nncf|^\s*$")
-    # porównanie FP32 / INT8 (raport dołączany do pakietu)
+    [ "$RB_MODELS" = 1 ] && find "$MDIR" -maxdepth 1 -name '*_openvino_model' -exec rm -rf {} +
+    mkdir -p "$MDIR"
+    for m in $MODELS; do
+        (cd "$MDIR" && "$VX/bin/python" "$ROOT/tools/export_models.py" --model "$m" --out "$MDIR" \
+            --sizes $MODEL_SIZES ${CALIB:+--calib "$CALIB"} 2>&1 | grep -vE "^INFO:nncf|^\s*$|deprecated")
+    done
+    # porównania (raport dołączany do pakietu): FP32/INT8 każdego modelu i modele między sobą
     IMGS="${CALIB:-$(find "$B/datasets" -type d -path '*coco128/images/train2017' | head -1)}"
-    STEM="$(basename "$MODEL" .pt)"
-    : > "$MODELS/RAPORT-INT8.txt"
+    REP="$MDIR/RAPORT-MODELE.txt"
+    : > "$REP"
+    cmp_models() {   # $1 $2 katalogi modeli, $3 opis
+        if [ -z "$IMGS" ] || [ ! -d "$MDIR/$1" ] || [ ! -d "$MDIR/$2" ]; then return 0; fi
+        echo "==> $3"
+        { echo "### $3"; "$VX/bin/python" "$ROOT/tools/compare_models.py" "$MDIR/$1" "$MDIR/$2" "$IMGS" --threads 4; echo; } \
+            | tee -a "$REP"
+    }
+    set -- $MODELS
     for s in $MODEL_SIZES; do
-        if [ -n "$IMGS" ] && [ -d "$MODELS/${STEM}_${s}_int8_openvino_model" ]; then
-            echo "==> Porównanie FP32 / INT8 ($s) na $(basename "$IMGS")"
-            "$VX/bin/python" "$ROOT/tools/compare_models.py" "$MODELS/${STEM}_${s}_openvino_model" \
-                "$MODELS/${STEM}_${s}_int8_openvino_model" "$IMGS" --threads 4 | tee -a "$MODELS/RAPORT-INT8.txt"
-            echo >> "$MODELS/RAPORT-INT8.txt"
+        for m in $MODELS; do
+            st="$(basename "$m" .pt)"
+            cmp_models "${st}_${s}_openvino_model" "${st}_${s}_int8_openvino_model" "$st $s: FP32 / INT8"
+        done
+        if [ $# -ge 2 ]; then
+            cmp_models "$(basename "$1" .pt)_${s}_openvino_model" "$(basename "$2" .pt)_${s}_openvino_model" \
+                "$(basename "$1" .pt) / $(basename "$2" .pt) $s (FP32)"
         fi
     done
 fi
@@ -215,14 +226,14 @@ if [ "$DO_WHEELS" = 1 ]; then
 fi
 if [ "$DO_MODELS" = 1 ]; then
     install -d "$OPT/models"
-    for d in "$MODELS"/*_openvino_model; do
+    for d in "$MDIR"/*_openvino_model; do
         [ -d "$d" ] || continue
         install -d "$OPT/models/$(basename "$d")"
         install -m 644 "$d"/* "$OPT/models/$(basename "$d")/"
     done
-    [ -s "$MODELS/RAPORT-INT8.txt" ] && install -m 644 "$MODELS/RAPORT-INT8.txt" "$DOC/"
+    [ -s "$MDIR/RAPORT-MODELE.txt" ] && install -m 644 "$MDIR/RAPORT-MODELE.txt" "$DOC/"
     cat > "$DOC/MODELS.txt" <<'EOF'
-The YOLO11 models in /opt/szukaj_cpu/models were exported from Ultralytics YOLO11
+The YOLO11 and YOLO26 models in /opt/szukaj_cpu/models were exported from Ultralytics
 weights (https://github.com/ultralytics/ultralytics), which are licensed under AGPL-3.0.
 INT8 variants were quantized with OpenVINO NNCF.
 EOF
