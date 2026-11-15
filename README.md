@@ -47,14 +47,14 @@ events ──► gallery (index.html, wyniki.csv, thumbnails, clips, full frames
 Build the package (any Debian/Ubuntu machine with `dpkg-deb`):
 
 ```bash
-bash packaging/build-deb.sh            # → dist/szukaj-cpu_1.0.5_all.deb
+bash packaging/build-deb.sh            # → dist/szukaj-cpu_1.1.0_all.deb
 ```
 
 Install on the server (needs internet access – the post-install step creates the Python
 environment with OpenVINO and OpenCV):
 
 ```bash
-sudo apt install ./szukaj-cpu_1.0.5_all.deb
+sudo apt install ./szukaj-cpu_1.1.0_all.deb
 szukaj-cpu --init                       # creates ~/.szukaj_cpu/szukaj_cpu.toml
 nano ~/.szukaj_cpu/szukaj_cpu.toml      # cameras, gallery path, Shinobi, ntfy
 sudo usermod -aG render,video $USER     # iGPU access (log in again)
@@ -80,7 +80,7 @@ journalctl -u szukaj_cpu@$USER -f
 ```bash
 bash uninstall.sh          # stops szukaj_cpu.service, moves config, models and static
                            # ffmpeg to ~/.szukaj_cpu, removes ~/szukaj_cpu
-sudo apt install ./szukaj-cpu_1.0.5_all.deb
+sudo apt install ./szukaj-cpu_1.1.0_all.deb
 sudo systemctl enable --now szukaj_cpu@$USER
 ```
 
@@ -133,6 +133,25 @@ browser: choose a camera, click the polygon corners or drag the crop rectangle o
 snapshot, then **Save and apply** – the values are written to `szukaj_cpu.toml` (a `.bak`
 copy is kept, file mode preserved) and take effect immediately, without a restart.
 **Restart service** restarts the process (systemd brings it back via `Restart=always`).
+
+### Configuration page (`/admin/config`)
+
+Everything else in `szukaj_cpu.toml` can be edited in the browser, grouped in a side menu:
+cameras, detection, parked vehicles, clips, gallery and web panel, notifications, Shinobi,
+paths and tools.
+
+* **Cameras** – add, rename, disable or remove cameras; main (recorded) and analysis
+  (substream) RTSP addresses with a **Test** button (ffprobe: codec, resolution, frame rate
+  and keyframe interval, with a warning when the analysis stream has keyframes too rarely
+  for `frame_selection = "keyframes"`) and an **RTSP address wizard** (Dahua/Amcrest,
+  Hikvision/Tiandy, Reolink, Uniview: IP, port, channel, user, password → both URLs).
+* Passwords and keys are never sent to the browser: camera passwords show as `********`
+  and are kept unless the user or the IP address changes; secret fields left empty keep
+  their value.
+* **Save** shows the list of changes and validates the whole file exactly as at service
+  start; only changed keys are rewritten, comments and layout stay, the previous file is
+  kept as `.bak`. **Save and restart** applies the changes right away. If the file was
+  changed meanwhile (e.g. by the detection-area page) saving is refused until reload.
 
 The panel is enabled only when a login is set; the whole site (gallery included) then
 requires HTTP Basic authentication:

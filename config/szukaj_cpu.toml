@@ -114,8 +114,9 @@ refresh_seconds = 60
 # (without http_user/http_password: no login – home network only)
 http_port = 0
 # Login for the gallery web server. When both are set, the whole site requires
-# this login and the settings panel /admin/ is enabled (camera selection,
-# drawing the detection zone and crop, saving this file, service restart).
+# this login and the settings panel is enabled: /admin/ (detection zone and crop
+# drawn on the camera image) and /admin/config (all other settings, cameras with
+# an RTSP address wizard and stream test, service restart).
 # Basic auth – over the network use HTTPS, e.g. Tailscale:
 #   sudo tailscale serve --bg --https=8443 http://localhost:8091
 http_user = ""
