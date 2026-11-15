@@ -65,7 +65,7 @@ NAME_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})")   # jak w
 SEG_RE = re.compile(r"^(\d{8}-\d{6})\.ts$")
 TS_FMT = "%Y-%m-%d %H:%M:%S"
 FILE_TS = "%Y-%m-%dT%H-%M-%S"
-__version__ = "1.0.5"
+__version__ = "1.1.0"
 CONF_DIR = Path(os.path.expanduser("~/.szukaj_cpu"))
 DEFAULT_CONF = "~/.szukaj_cpu/szukaj_cpu.toml"
 
@@ -890,7 +890,7 @@ img{{width:100%;display:block}} figcaption{{padding:8px;font-size:14px;line-heig
 small{{color:#888}} a{{color:inherit}}
 </style>
 <h1>Wykrycia na kamerach ({len(rows)})</h1>
-{'<p><a href="/admin/">⚙ Obszar detekcji kamer</a></p>' if self.cfg.port and self.cfg.http_user and self.cfg.http_password else ''}
+{'<p><a href="/admin/">⚙ Obszar detekcji</a> · <a href="/admin/config">⚙ Konfiguracja</a></p>' if self.cfg.port and self.cfg.http_user and self.cfg.http_password else ''}
 <p><small>Aktualizacja: {now}. Kliknij miniaturę, aby otworzyć klip (▶). Przechowywane {self.cfg.retencja:g} dni.</small></p>
 {''.join(parts)}</html>"""
         tmp = self.dir / ".index.tmp"
@@ -1286,6 +1286,520 @@ def save_camera_area(cfg, cam, zone, crop):
     return f"zone = {zone_s}\ncrop = {crop_s}"
 
 
+# ── konfigurator (strona /admin/config) ──
+# Opis pól formularza. Wartości domyślne MUSZĄ odpowiadać domyślnym z load_config –
+# klucz nieobecny w pliku jest pokazywany z wartością domyślną i zapisywany tylko po zmianie.
+
+COCO = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+        "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog",
+        "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
+        "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite",
+        "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle",
+        "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+        "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant",
+        "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone",
+        "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors",
+        "teddy bear", "hair drier", "toothbrush"]
+
+
+def F(key, label, typ, default, help="", **kw):
+    return dict(key=key, label=label, type=typ, default=default, help=help, **kw)
+
+
+FORM = [
+    {"id": "detection", "title": "Wykrywanie", "desc": "Co i jak dokładnie wykrywa model.", "fields": [
+        F("classes", "Wykrywane obiekty", "classes", ["person"],
+          "Klasy COCO, o których usługa powiadamia. Zwykle wystarczy osoba."),
+        F("confidence", "Minimalna pewność", "float", 0.5,
+          "Wyżej = mniej fałszywych alarmów, ale łatwiej przeoczyć osobę w nocy.", min=0.05, max=0.95, step=0.05,
+          slider=True),
+        F("imgsz", "Rozmiar wejścia modelu", "int", 640,
+          "Dłuższy bok obrazu dla modelu. 640 = szybko; 960 = lepiej widzi małe, dalekie postacie (~2× wolniej). "
+          "Zmiana wymaga jednorazowego eksportu modelu (szukaj-cpu --test z narzędziami eksportu).",
+          min=320, max=1920, step=32, options=[640, 768, 960, 1280]),
+        F("aspect_ratio", "Proporcje wejścia modelu", "select", "16:9",
+          "16:9 pasuje do kamer – bez szarych pasów, szybciej niż kwadrat.",
+          options=[["16:9", "16:9 (zalecane)"], ["4:3", "4:3"], ["square", "kwadrat"]]),
+        F("engine", "Silnik", "select", "openvino", "",
+          options=[["openvino", "OpenVINO (zalecany na Intel)"], ["pytorch", "PyTorch (wymaga narzędzi eksportu)"]]),
+        F("threads", "Wątki CPU na analizę", "int", 2, "0 = wszystkie rdzenie. Na i5-7500 najlepiej 4.",
+          min=0, max=64),
+        F("frame_selection", "Które klatki analizować", "select", "interval",
+          "Klatki kluczowe = najmniej pracy, wymagają substreamu z I-frame co 1 s. "
+          "Interwał = iGPU dekoduje cały strumień i co analysis_interval s wybiera klatkę.",
+          options=[["keyframes", "tylko klatki kluczowe (I-frame)"], ["interval", "co określony czas"]]),
+        F("analysis_interval", "Odstęp analizy", "float", 1.0, "Tylko w trybie „co określony czas”.",
+          min=0.1, max=60, step=0.1, unit="s", show_if=["frame_selection", "interval"]),
+        F("min_hits", "Klatki potrzebne do zdarzenia", "int", 1,
+          "Ile klatek z wykryciem trzeba, aby zapisać zdarzenie. 1 = najczulej; 2 odfiltruje pojedyncze pomyłki.",
+          min=1, max=20),
+        F("event_gap", "Koniec zdarzenia po", "float", 10.0,
+          "Zdarzenie kończy się po tylu sekundach bez wykrycia.", min=1, max=600, unit="s"),
+        F("max_height", "Maksymalna wysokość klatki", "int", 1080,
+          "Wyższe klatki są zmniejszane (np. 4K → 1080p). 0 = bez zmniejszania.", min=0, max=4320,
+          options=[0, 720, 1080, 1440]),
+        F("watchdog", "Ponowne połączenie po", "float", 30.0,
+          "Gdy z kamery nie przychodzi klatka przez tyle sekund, usługa łączy się ponownie.", min=5, max=600, unit="s"),
+    ]},
+    {"id": "static", "section": "detection", "title": "Stojące pojazdy",
+     "desc": "Zaparkowane auto nie wywołuje ciągle nowych zdarzeń. Przyjazd, odjazd i ruch nadal są zgłaszane.",
+     "fields": [
+        F("static_classes", "Dotyczy klas", "classes", ["car", "truck", "bus", "motorcycle", "bicycle"],
+          "Pusta lista = wyłączone. Nie dodawaj osoby – stojący człowiek przestałby wywoływać alarm."),
+        F("static_after", "Nieruchomy po", "float", 60.0,
+          "Po tylu sekundach w tym samym miejscu obiekt jest uznawany za nieruchomy.", min=5, max=3600, unit="s"),
+        F("static_forget", "Zapomnij po", "float", 21600.0,
+          "Nieruchomy obiekt niewidziany przez ten czas jest zapominany (21600 s = 6 h).",
+          min=60, max=604800, unit="s"),
+    ]},
+    {"id": "clips", "title": "Klipy", "desc": "Krótkie nagrania zdarzeń wycinane ze strumienia głównego (bez kodowania).",
+     "fields": [
+        F("enabled", "Twórz klipy", "bool", True, "Wymagane także do pełnych klatek w galerii."),
+        F("pre_seconds", "Przed zdarzeniem", "float", 3.0, "", min=0, max=60, unit="s"),
+        F("post_seconds", "Po zdarzeniu", "float", 5.0, "", min=0, max=120, unit="s"),
+        F("max_length", "Maksymalna długość klipu", "float", 300.0, "", min=10, max=3600, unit="s"),
+        F("segment_length", "Długość segmentu bufora", "int", 4,
+          "Dokładność początku i końca klipu. Bufor jest w RAM (/dev/shm).", min=2, max=30, unit="s"),
+    ]},
+    {"id": "gallery", "title": "Galeria i panel WWW", "desc": "Strona z wykryciami i ten panel.", "fields": [
+        F("retention_days", "Przechowuj przez", "float", 5.0, "Starsze wpisy, miniatury i klipy są usuwane.",
+          min=0.5, max=365, unit="dni"),
+        F("refresh_seconds", "Odświeżanie galerii", "int", 60, "0 = wyłączone.", min=0, max=3600, unit="s"),
+        F("http_port", "Port serwera WWW", "int", 0,
+          "0 = wyłącza galerię WWW i ten panel. Zmiana portu = panel pod nowym adresem po restarcie.",
+          min=0, max=65535, restart_note=True),
+        F("http_user", "Login", "text", "", "Login i hasło włączają ten panel. Bez nich panel się wyłączy."),
+        F("http_password", "Hasło", "secret", "", "Zostaw puste, aby nie zmieniać."),
+        F("full_frame", "Pełna klatka ze strumienia głównego", "bool", True,
+          "Dla każdego zdarzenia zapisuje kadr w pełnej rozdzielczości (wymaga klipów)."),
+        F("full_format", "Format pełnej klatki", "select", "jxl",
+          "JPEG XL jest najmniejszy, ale pokazuje go tylko Safari.",
+          options=[["jxl", "JPEG XL (najmniejszy)"], ["jpg", "JPEG (działa wszędzie)"], ["webp", "WebP"]]),
+        F("full_quality", "Jakość pełnej klatki", "int", 90, "Dla JPEG XL 90 = wizualnie bezstratnie.",
+          min=1, max=100, slider=True),
+        F("thumb_width", "Szerokość miniatury", "int", 1280, "0 = pełny rozmiar.", min=0, max=3840, unit="px"),
+    ]},
+    {"id": "notifications", "title": "Powiadomienia", "desc": "Powiadomienia ze zdjęciem przez ntfy.", "fields": [
+        F("ntfy_url", "Adres tematu ntfy", "text", "",
+          "Np. http://127.0.0.1:8092/szukaj (własny serwer) lub https://ntfy.sh/temat. Puste = wyłączone.",
+          placeholder="http://127.0.0.1:8092/szukaj"),
+        F("ntfy_token", "Token ntfy", "secret", "", "Token użytkownika publikującego. Zostaw puste, aby nie zmieniać."),
+        F("priority", "Priorytet", "select", "high", "",
+          options=[["min", "min"], ["low", "niski"], ["default", "domyślny"], ["high", "wysoki"],
+                   ["max", "maksymalny (alarm)"]]),
+        F("click_url", "Adres po stuknięciu", "text", "", "Np. adres galerii.", placeholder="http://serwer:8091/"),
+        F("min_interval", "Odstęp między powiadomieniami", "float", 120.0, "Z jednej kamery.",
+          min=0, max=3600, unit="s"),
+    ]},
+    {"id": "shinobi", "title": "Shinobi", "desc": "Znaczniki zdarzeń na osi czasu Shinobi (API /motion). "
+                                                   "Puste klucze = wyłączone.", "fields": [
+        F("url", "Adres panelu Shinobi", "text", "", "Na tym samym serwerze zwykle http://127.0.0.1:8080",
+          placeholder="http://127.0.0.1:8080"),
+        F("api_key", "Klucz API", "secret", "", "Panel Shinobi → menu użytkownika → API. Puste = bez zmian."),
+        F("group_key", "Klucz grupy", "secret", "", "Panel Shinobi → Ustawienia → Group Key. Puste = bez zmian."),
+        F("repeat_seconds", "Ponawiaj co", "float", 30.0,
+          "Dopóki obiekt jest widoczny (podtrzymuje nagrywanie Watch-Only). 0 = raz na zdarzenie.",
+          min=0, max=3600, unit="s"),
+    ]},
+    {"id": "paths", "title": "Ścieżki i narzędzia", "desc": "Katalogi, model i programy.", "fields": [
+        F("recordings", "Nagrania Shinobi", "text", "",
+          "Gdy galeria jest pusta, powstaje obok jako wyniki_osoby.", placeholder="/home/Shinobi/videos"),
+        F("gallery", "Katalog galerii", "text", "", "Użytkownik usługi musi mieć prawo zapisu."),
+        F("buffer", "Bufor segmentów", "text", "/dev/shm/szukaj_cpu", "W RAM – nie zużywa dysku."),
+        F("model", "Model YOLO", "text", "~/.szukaj_cpu/models/yolo11s.pt",
+          "Plik .pt; wersja OpenVINO powstaje obok przy eksporcie."),
+        F("ffmpeg", "ffmpeg", "text", "auto", "„auto” = statyczny build z ~/.szukaj_cpu/, inaczej systemowy."),
+        F("ffprobe", "ffprobe", "text", "auto", ""),
+        F("vaapi_device", "Urządzenie VAAPI (iGPU)", "text", "/dev/dri/renderD128", "Puste = dekodowanie na CPU."),
+        F("log_file", "Dodatkowy plik logu", "text", "", "Puste = tylko dziennik systemd."),
+    ]},
+]
+CAMERA_KEYS = ("name", "url", "analysis_url", "enabled", "shinobi_monitor")
+SECRET_MASK = "********"
+_URL_PW = re.compile(r"^([a-zA-Z][\w+.-]*://[^:/@\s]*:)([^/\s]*)(@)")   # hasło do ostatniego @
+
+
+def form_fields():
+    for grp in FORM:
+        for f in grp["fields"]:
+            yield grp.get("section", grp["id"]), f
+
+
+def mask_secret_url(url):
+    return _URL_PW.sub(lambda m: m.group(1) + (SECRET_MASK if m.group(2) else "") + m.group(3), url)
+
+
+def url_password(url):
+    m = _URL_PW.match(url or "")
+    return m.group(2) if m else None
+
+
+def toml_dump(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        return repr(round(v, 6)) if v != int(v) or abs(v) >= 1e15 else f"{v:.1f}"
+    if isinstance(v, str):
+        return json.dumps(v, ensure_ascii=False)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(toml_dump(x) for x in v) + "]"
+    raise ValueError(f"nieobsługiwany typ {type(v).__name__}")
+
+
+def _headers(lines):
+    """Granice tabel: lista (nagłówek, początek, koniec) z pominięciem nawiasów w wartościach."""
+    out, depth, cur = [], 0, None
+    for j, ln in enumerate(lines):
+        st = ln.strip()
+        if depth == 0 and st.startswith("[") and not st.startswith("#"):
+            if cur:
+                out.append((cur[0], cur[1], j))
+            cur = (st.split("#", 1)[0].strip(), j)
+            continue
+        depth += _bracket_depth(ln)
+    if cur:
+        out.append((cur[0], cur[1], len(lines)))
+    return out
+
+
+def _inline_comment(line):
+    """Komentarz na końcu linii (poza napisami), np. '   # opis'."""
+    m = re.match(r'^((?:"(?:\\.|[^"\\])*"|\'[^\']*\'|[^#"\'])*)(\s*#.*)$', line.rstrip("\n"))
+    if not m:
+        return ""
+    code = m.group(1)
+    return code[len(code.rstrip()):] + m.group(2).lstrip()
+
+
+def _set_key(block, key, val):
+    """block = linie tabeli bez nagłówka; ustawia lub dopisuje key = val."""
+    for k, ln in enumerate(block):
+        if re.match(rf"^\s*{re.escape(key)}\s*=", ln):
+            d, e = _bracket_depth(ln), k + 1
+            while d > 0 and e < len(block):
+                d += _bracket_depth(block[e])
+                e += 1
+            note = _inline_comment(ln) if e == k + 1 else ""
+            block[k:e] = [f"{key} = {val}{note}\n"]
+            return
+    last = max((n for n, ln in enumerate(block) if ln.strip() and not ln.strip().startswith("#")), default=-1)
+    if last < 0:      # pusta tabela (same komentarze) – za komentarzami
+        last = max((n for n, ln in enumerate(block) if ln.strip()), default=-1)
+    block.insert(last + 1, f"{key} = {val}\n")
+
+
+def toml_apply(text, sections, cameras):
+    """sections: {sekcja: {klucz: wartość}}; cameras: lista {"orig": nazwa|None, klucz: wartość}
+    w docelowej kolejności (bloki usunięte = nieobecne). Komentarze i reszta pliku zostają."""
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    for sec, vals in sections.items():
+        if not vals:
+            continue
+        hdr = next((h for h in _headers(lines) if h[0] == f"[{sec}]"), None)
+        if hdr is None:
+            first_cam = next((h[1] for h in _headers(lines) if h[0] == "[[camera]]"), len(lines))
+            new = [f"[{sec}]\n"] + [f"{k} = {toml_dump(v)}\n" for k, v in vals.items()] + ["\n"]
+            lines[first_cam:first_cam] = new
+            continue
+        _, s, e = hdr
+        block = lines[s + 1:e]
+        for k, v in vals.items():
+            _set_key(block, k, toml_dump(v))
+        lines[s + 1:e] = block
+
+    def cam_name(block):
+        for ln in block:
+            m = re.match(r'^\s*name\s*=\s*"([^"]*)"', ln)
+            if m:
+                return re.sub(r"[^\w-]", "_", m.group(1).strip())
+        return None
+
+    cam_hdrs = [h for h in _headers(lines) if h[0] == "[[camera]]"]
+    existing = {}
+    for n, (_, s, e) in enumerate(cam_hdrs):
+        existing.setdefault(cam_name(lines[s + 1:e]) or f"camera{n + 1}", (s, e))
+    blocks, used = {}, set()
+    for cam in cameras:
+        if cam.get("orig") in existing:
+            s, e = existing[cam["orig"]]
+            block = lines[s + 1:e]
+            used.add(cam["orig"])
+        else:
+            block = []
+        for k in CAMERA_KEYS:
+            if k in cam:
+                _set_key(block, k, toml_dump(cam[k]))
+        if not cam.get("orig") in existing:
+            block += ["zone = []\n", "crop = []\n"]
+        while block and not block[-1].strip():
+            block.pop()
+        blocks[id(cam)] = ["[[camera]]\n"] + block + ["\n"]
+    # wszystkie bloki kamer zastąpione w miejscu pierwszego, w kolejności z formularza;
+    # usunięte bloki znikają (wraz z ich treścią, bez komentarzy sprzed nich)
+    keep = []
+    first = cam_hdrs[0][1] if cam_hdrs else None
+    removed = {i for h in cam_hdrs for i in range(h[1], h[2])}
+    for i, ln in enumerate(lines):
+        if i == first:
+            for cam in cameras:
+                keep += blocks[id(cam)]
+        if i not in removed:
+            keep.append(ln)
+    if first is None:
+        if keep and keep[-1].strip():
+            keep.append("\n")
+        for cam in cameras:
+            keep += blocks[id(cam)]
+    out = "".join(keep)
+    return re.sub(r"\n{3,}(?=\[\[camera\]\])", "\n\n", out).rstrip("\n") + "\n"
+
+
+def config_view(path):
+    """Wartości do formularza: z pliku albo domyślne; sekrety bez treści."""
+    text = Path(path).read_text(encoding="utf-8")
+    data = tomllib.loads(text)
+    vals, secrets = {}, {}
+    for sec, f in form_fields():
+        cur = data.get(sec, {}) if isinstance(data.get(sec), dict) else {}
+        v = cur.get(f["key"], f["default"])
+        if f["type"] == "secret":
+            secrets[f"{sec}.{f['key']}"] = bool(v)
+            v = ""
+        vals.setdefault(sec, {})[f["key"]] = v
+    cams = []
+    for i, c in enumerate(data.get("camera", []) if isinstance(data.get("camera"), list) else [], 1):
+        name = re.sub(r"[^\w-]", "_", str(c.get("name", f"camera{i}")).strip()) or f"camera{i}"
+        cams.append({"orig": name, "name": str(c.get("name", name)), "enabled": c.get("enabled", True) is True,
+                     "url": mask_secret_url(str(c.get("url", ""))),
+                     "analysis_url": mask_secret_url(str(c.get("analysis_url", ""))),
+                     "shinobi_monitor": str(c.get("shinobi_monitor", "")),
+                     "has_zone": bool(c.get("zone")), "has_crop": bool(c.get("crop"))})
+    return {"form": FORM, "coco": COCO, "values": vals, "secrets": secrets, "cameras": cams,
+            "version": config_version(text)}
+
+
+def config_version(text):
+    import hashlib
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _coerce(f, v):
+    t, lab = f["type"], f["label"]
+    if t == "bool":
+        if not isinstance(v, bool):
+            raise ValueError(f"{lab}: oczekiwano tak/nie")
+        return v
+    if t in ("int", "float"):
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{lab}: to nie jest liczba")
+        if t == "int":
+            if x != int(x):
+                raise ValueError(f"{lab}: musi być liczbą całkowitą")
+            x = int(x)
+        if "min" in f and x < f["min"] or "max" in f and x > f["max"]:
+            raise ValueError(f"{lab}: dozwolony zakres {f.get('min')}–{f.get('max')}")
+        return x
+    if t == "classes":
+        if not isinstance(v, list):
+            raise ValueError(f"{lab}: oczekiwano listy")
+        out = []
+        for x in v:
+            x = str(x).strip()
+            if x and x not in out:
+                out.append(x)
+        return out
+    if t == "select":
+        if v not in [o[0] for o in f["options"]]:
+            raise ValueError(f"{lab}: niedozwolona wartość")
+        return v
+    if not isinstance(v, str):
+        raise ValueError(f"{lab}: oczekiwano tekstu")
+    if "\n" in v or "\r" in v:
+        raise ValueError(f"{lab}: tekst nie może mieć nowych linii")
+    return v if t == "secret" else v.strip()
+
+
+def _restore_pw(new_url, old_urls):
+    """Adres z hasłem zamaskowanym w formularzu → hasło z dotychczasowego adresu tej kamery."""
+    if url_password(new_url) != SECRET_MASK:
+        return new_url
+    def who(u):          # użytkownik i host – hasło wraca tylko do tej samej kamery
+        m = _URL_PW.match(u)
+        return m.group(1), u[m.end():].split("/", 1)[0].lower()
+    want = who(new_url)
+    for old in old_urls:
+        m = _URL_PW.match(old or "")
+        if m and m.group(2) != SECRET_MASK and who(old) == want:
+            return _URL_PW.sub(lambda mm: mm.group(1) + m.group(2) + mm.group(3), new_url)
+    raise ValueError("podaj hasło w adresie kamery – zmieniono użytkownika lub adres IP, więc zapisane "
+                     "hasło nie zostanie użyte")
+
+
+def plan_config(path, body):
+    """Zbuduj nowy tekst pliku z danych formularza. Zwraca (stary, nowy, lista zmian)."""
+    old = Path(path).read_text(encoding="utf-8")
+    data = tomllib.loads(old)
+    vals = body.get("values") or {}
+    sections, changes = {}, []
+    for sec, f in form_fields():
+        if f["key"] not in (vals.get(sec) or {}):
+            continue
+        new = _coerce(f, vals[sec][f["key"]])
+        cur_tbl = data.get(sec, {}) if isinstance(data.get(sec), dict) else {}
+        cur = cur_tbl.get(f["key"], f["default"])
+        if f["type"] == "secret" and new == "" and not body.get("clear", {}).get(f"{sec}.{f['key']}"):
+            continue                                   # puste = bez zmian
+        if f["type"] == "float" and new == int(new):
+            new = int(new)                             # 10 zamiast 10.0 – TOML i load_config przyjmą oba
+        if cur == new and type(cur) is not bool or cur is new:
+            continue
+        sections.setdefault(sec, {})[f["key"]] = new
+        if f["type"] == "secret":
+            cur, new_show = ("•••" if cur else ""), ("(nowa wartość)" if new else "")
+        else:
+            new_show = new
+        changes.append({"where": f"{sec}.{f['key']}", "label": f["label"], "old": cur, "new": new_show})
+
+    old_cams = {}
+    for i, c in enumerate(data.get("camera", []) if isinstance(data.get("camera"), list) else [], 1):
+        old_cams[re.sub(r"[^\w-]", "_", str(c.get("name", f"camera{i}")).strip()) or f"camera{i}"] = c
+    cams_in = body.get("cameras")
+    cams = []
+    if cams_in is None:
+        cams = [{"orig": n} for n in old_cams]
+    else:
+        names = set()
+        for c in cams_in:
+            orig = c.get("orig") if c.get("orig") in old_cams else None
+            name = str(c.get("name", "")).strip()
+            if not name:
+                raise ValueError("każda kamera musi mieć nazwę")
+            safe = re.sub(r"[^\w-]", "_", name)
+            if safe in names:
+                raise ValueError(f"powtórzona nazwa kamery: {name}")
+            names.add(safe)
+            oc = old_cams.get(orig, {})
+            olds = [str(oc.get("url", "")), str(oc.get("analysis_url", ""))]
+            entry = {"orig": orig}
+            for k in CAMERA_KEYS:
+                v = c.get(k)
+                if k == "enabled":
+                    v = v is not False
+                else:
+                    v = str(v or "").strip()
+                    if "\n" in v:
+                        raise ValueError(f"{name}: nowa linia w polu {k}")
+                if k in ("url", "analysis_url"):
+                    if v and not re.match(r"^(rtsps?|https?|file)://|^/", v):
+                        raise ValueError(f"{name}: adres musi zaczynać się od rtsp://")
+                    v = _restore_pw(v, olds) if v else v
+                if k == "url" and not v:
+                    raise ValueError(f"{name}: brak adresu strumienia głównego")
+                prev = oc.get(k, True if k == "enabled" else "") if orig else None
+                if orig is None or prev != v:
+                    entry[k] = v
+                    if orig is not None:
+                        show = mask_secret_url if k in ("url", "analysis_url") else (lambda x: x)
+                        changes.append({"where": f"camera.{orig}.{k}", "label": f"{orig}: {k}",
+                                        "old": show(prev) if isinstance(prev, str) else prev,
+                                        "new": show(v) if isinstance(v, str) else v})
+            cams.append(entry)
+            if orig is None:
+                changes.append({"where": f"camera.{name}", "label": f"nowa kamera {name}", "old": "",
+                                "new": mask_secret_url(entry["url"])})
+        for n in old_cams:
+            if n not in {c["orig"] for c in cams}:
+                changes.append({"where": f"camera.{n}", "label": f"usunięta kamera {n}", "old": n, "new": ""})
+        if [c["orig"] for c in cams if c["orig"]] != [n for n in old_cams if n in {c["orig"] for c in cams}]:
+            changes.append({"where": "camera", "label": "kolejność kamer", "old": "", "new": ""})
+    new = toml_apply(old, sections, cams) if (sections or cams_in is not None) else old
+    return old, new, changes
+
+
+def validate_config_text(text, path):
+    """Pełna kontrola jak przy starcie usługi (load_config) na kopii pliku."""
+    tmp = Path(path).with_name(f".{Path(path).name}.check")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        err = []
+        real = sys.stderr
+        import io
+        sys.stderr = io.StringIO()
+        try:
+            load_config(tmp)
+        except SystemExit as e:
+            err.append(str(e.code).replace(str(tmp), "konfiguracja"))
+        finally:
+            warn = sys.stderr.getvalue()
+            sys.stderr = real
+        warns = [w.strip().lstrip("! ").replace(str(tmp), "konfiguracja") for w in warn.splitlines() if w.strip()]
+        return (err[0] if err else None), warns
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def write_config(path, old, new):
+    path = Path(path)
+    mode = path.stat().st_mode & 0o777
+    bak = path.with_name(path.name + ".bak")
+    bak.write_text(old, encoding="utf-8")
+    os.chmod(bak, mode)
+    tmp = path.with_name(f".{path.name}.tmp")
+    tmp.write_text(new, encoding="utf-8")
+    os.chmod(tmp, mode)
+    tmp.replace(path)
+
+
+def probe_stream(cfg, url, cam_orig=None):
+    """Test strumienia z panelu: kodek, rozdzielczość, kl/s i odstęp klatek kluczowych."""
+    if not re.match(r"^rtsps?://", url or ""):
+        raise ValueError("test działa tylko dla adresów rtsp://")
+    if url_password(url) == SECRET_MASK:
+        data = tomllib.loads(Path(cfg.path).read_text(encoding="utf-8"))
+        olds = [str(c.get(k, "")) for c in data.get("camera", []) for k in ("url", "analysis_url")
+                if cam_orig is None or re.sub(r"[^\w-]", "_", str(c.get("name", "")).strip()) == cam_orig]
+        url = _restore_pw(url, olds)
+    cmd = [cfg.ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-timeout", "8000000",
+           "-select_streams", "v:0", "-read_intervals", "%+6",
+           "-show_entries", "stream=codec_name,width,height,avg_frame_rate,r_frame_rate:packet=pts_time,flags",
+           "-of", "json", url]
+    t0 = time.time()
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=25)
+    except subprocess.TimeoutExpired:
+        raise ValueError("brak odpowiedzi kamery w 25 s")
+    try:
+        j = json.loads(r.stdout or "{}")
+        st = j["streams"][0]
+    except (ValueError, KeyError, IndexError):
+        msg = (r.stderr or "").strip().splitlines()
+        raise ValueError(mask_url(msg[-1]) if msg else "nie udało się odczytać strumienia")
+
+    def rate(s):
+        try:
+            a, b = s.split("/")
+            return float(a) / float(b) if float(b) else 0.0
+        except (ValueError, AttributeError):
+            return 0.0
+    fps = rate(st.get("avg_frame_rate")) or rate(st.get("r_frame_rate"))
+    keys = sorted(float(p["pts_time"]) for p in j.get("packets", [])
+                  if "K" in p.get("flags", "") and p.get("pts_time") not in (None, "N/A"))
+    gop = None
+    if len(keys) >= 2:
+        d = sorted(b - a for a, b in zip(keys, keys[1:]))
+        gop = round(d[len(d) // 2], 2)
+    return {"codec": st.get("codec_name", "?"), "width": st.get("width"), "height": st.get("height"),
+            "fps": round(fps, 2) if fps else None, "gop": gop, "keyframes": len(keys),
+            "ms": int((time.time() - t0) * 1000)}
+
+
 # ── panel WWW ──
 
 ADMIN_HTML = r"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
@@ -1321,9 +1835,22 @@ details.intro summary{cursor:pointer;padding:11px 0;font-weight:600}
 .tip{font-size:13.5px;color:#c9ccd1;padding-bottom:12px;margin:0}
 #info{font-size:13.5px;margin:6px 0;padding:8px 12px;border-left:3px solid var(--line);background:var(--card);border-radius:0 8px 8px 0}
 #info b{color:var(--fg)}#info .w{color:#ffc46b}
-</style></head><body><main>
+header.top{border-bottom:1px solid var(--line)}
+.topin{max-width:1100px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:16px;margin-right:6px}
+nav.tabs{display:flex;gap:4px}
+nav.tabs a{padding:6px 12px;border-radius:8px;text-decoration:none;color:var(--mut);border:1px solid transparent}
+nav.tabs a.on{color:var(--fg);background:var(--card);border-color:var(--line)}
+nav.tabs a:hover{color:var(--fg)}.gal{margin-left:auto;font-size:14px}
+@media(max-width:820px){.gal{margin-left:0}}
+</style></head><body>
+<header class="top"><div class="topin">
+ <span class="brand">szukaj_cpu</span>
+ <nav class="tabs"><a href="/admin/" class="on">Obszar detekcji</a><a href="/admin/config">Konfiguracja</a></nav>
+ <a class="gal" href="/">← galeria</a>
+</div></header><main>
 <h1>Obszar detekcji kamer</h1>
-<p class="sub"><a href="/">← galeria</a> · zmiany działają od razu po zapisie i trafiają do pliku konfiguracji</p>
+<p class="sub">Zmiany działają od razu po zapisie i trafiają do pliku konfiguracji.</p>
 <div class="bar">
   <select id="cam"></select>
   <button id="mZone" class="on">Strefa (wielokąt)</button>
@@ -1531,10 +2058,490 @@ window.addEventListener("resize", draw);
     try { if (localStorage.getItem("szukaj_intro") === "0") $("intro").open = false; } catch (e) {}
     $("intro").addEventListener("toggle", () => { try { localStorage.setItem("szukaj_intro", $("intro").open ? "1" : "0"); } catch (e) {} });
     $("cam").innerHTML = cams.map(c => `<option>${c.name}</option>`).join("");
+    const want = decodeURIComponent((location.hash.match(/cam=([^&]+)/) || [])[1] || "");
+    if (cams.some(c => c.name === want)) $("cam").value = want;
+    window.addEventListener("hashchange", () => {
+      const w = decodeURIComponent((location.hash.match(/cam=([^&]+)/) || [])[1] || "");
+      if (cams.some(c => c.name === w)) { $("cam").value = w; loadCam(); }
+    });
     if (!restartOk) $("restart").title = "Dostępne tylko przy uruchomieniu przez systemd";
     setMode("zone"); loadCam();
   } catch (e) { msg("Nie udało się wczytać kamer: " + e.message, "err"); }
 })();
+</script></body></html>"""
+
+
+CONFIG_HTML = r"""<!doctype html><html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Konfiguracja – szukaj_cpu</title>
+<style>
+:root{--bg:#111;--card:#1b1d22;--card2:#15171b;--fg:#e6e6e6;--mut:#9aa0a6;--line:#2c2f36;--acc:#4ea1ff;--ok:#4cc38a;--err:#ff6b6b;--warn:#ffc46b;--chg:#d6a23a}
+*{box-sizing:border-box}html{scroll-padding-top:70px}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+a{color:var(--acc)}
+header.top{position:sticky;top:0;z-index:5;background:rgba(17,17,17,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
+.topin{max-width:1180px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:16px;margin-right:6px}
+nav.tabs{display:flex;gap:4px}
+nav.tabs a{padding:6px 12px;border-radius:8px;text-decoration:none;color:var(--mut);border:1px solid transparent}
+nav.tabs a.on{color:var(--fg);background:var(--card);border-color:var(--line)}
+nav.tabs a:hover{color:var(--fg)}
+.gal{margin-left:auto;font-size:14px}
+.wrap{max-width:1180px;margin:0 auto;padding:16px 16px 110px;display:grid;grid-template-columns:230px 1fr;gap:20px}
+aside{position:sticky;top:66px;align-self:start}
+aside a{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;border-radius:8px;color:var(--mut);text-decoration:none;font-size:14.5px}
+aside a:hover{color:var(--fg);background:var(--card2)}
+aside a.on{color:var(--fg);background:var(--card);box-shadow:inset 3px 0 0 var(--acc)}
+.badge{background:var(--chg);color:#1a1405;border-radius:999px;font-size:11.5px;font-weight:700;padding:0 7px;min-width:20px;text-align:center}
+.badge:empty{display:none}
+section.pane{display:none}section.pane.on{display:block}
+h2{font-size:19px;margin:2px 0 4px}.desc{color:var(--mut);margin:0 0 16px;font-size:14px}
+.field{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px;display:grid;grid-template-columns:minmax(180px,260px) 1fr;gap:6px 16px;align-items:start}
+.field.chg{border-color:#6b5420;box-shadow:inset 3px 0 0 var(--chg)}
+.field.hide{display:none}
+.field label.l{font-weight:600;font-size:14.5px;padding-top:6px}
+.field .key{display:block;color:#6e747c;font:12px ui-monospace,monospace;font-weight:400}
+.field .help{grid-column:2;color:var(--mut);font-size:13px;margin:0}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-width:0}
+input,select,button{font:inherit;color:var(--fg);background:#121418;border:1px solid var(--line);border-radius:8px;padding:7px 10px}
+input:focus,select:focus{outline:2px solid #2f5a8f;outline-offset:0;border-color:#2f5a8f}
+input[type=text],input[type=password],input.url{flex:1 1 260px;min-width:0}
+input[type=number]{width:120px}
+input[type=range]{flex:1 1 160px;padding:0;accent-color:var(--acc)}
+button{background:var(--card);cursor:pointer}button:hover{border-color:#4a4f58}
+button:disabled{opacity:.45;cursor:default}
+button.pri{background:#24456e;border-color:#2f5a8f}button.warn{border-color:#7a3d27}
+button.sm{padding:4px 9px;font-size:13px}button.link{background:none;border:none;color:var(--acc);padding:2px 4px}
+.unit{color:var(--mut);font-size:13.5px}.hint{color:var(--mut);font-size:12.5px}
+.quick{display:flex;gap:4px;flex-wrap:wrap}.quick button{padding:3px 8px;font-size:12.5px}
+.quick button.on{border-color:var(--acc);color:var(--acc)}
+.sw{position:relative;width:44px;height:24px;flex:none}
+.sw input{opacity:0;position:absolute;inset:0;margin:0;cursor:pointer;z-index:1}
+.sw span{position:absolute;inset:0;background:#33373f;border-radius:999px;transition:.15s}
+.sw span::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#cfd3d8;transition:.15s}
+.sw input:checked+span{background:#2f6fb8}.sw input:checked+span::after{left:23px;background:#fff}
+.sw input:focus-visible+span{outline:2px solid #2f5a8f}
+.chips{display:flex;flex-wrap:wrap;gap:6px;flex:1 1 100%}
+.chip{display:inline-flex;align-items:center;gap:4px;background:#22324a;border:1px solid #2f4b70;border-radius:999px;padding:2px 4px 2px 10px;font-size:13.5px}
+.chip button{background:none;border:none;padding:0 6px;color:#9ab;font-size:15px;line-height:1}
+.chip button:hover{color:#fff}
+.reset{margin-left:auto;display:none}.field.chg .reset{display:inline-block}
+/* kamery */
+.cam{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:14px;overflow:hidden}
+.cam.chg{border-color:#6b5420}.cam.del{opacity:.55}.cam.del .cbody{display:none}
+.chead{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 14px;background:var(--card2);border-bottom:1px solid var(--line)}
+.chead input.nm{font-weight:700;width:200px;flex:0 1 200px}
+.chead .sp{flex:1}
+.tag{font-size:12px;border-radius:999px;padding:1px 8px;border:1px solid var(--line);color:var(--mut)}
+.tag.new{border-color:#2f6fb8;color:#8cc0ff}.tag.off{border-color:#6e3a24;color:#ffab8a}
+.cbody{padding:12px 14px;display:grid;gap:12px}
+.row label{display:block;font-weight:600;font-size:14px;margin-bottom:4px}
+.row .hint{margin:4px 0 0}
+.probe{font-size:13px;margin-top:6px;min-height:0}
+.probe .okk{color:var(--ok)}.probe .w{color:var(--warn)}.probe .e{color:var(--err)}
+details.wiz{border:1px dashed #3a3f48;border-radius:10px;padding:0 12px}
+details.wiz summary{cursor:pointer;padding:9px 0;color:#c9ccd1;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding-bottom:12px}
+.grid label{font-size:12.5px;color:var(--mut);display:block;margin-bottom:3px}
+.grid input,.grid select{width:100%}
+.addcam{width:100%;padding:12px;border-style:dashed;color:#c9ccd1}
+/* pasek zapisu */
+.savebar{position:fixed;left:0;right:0;bottom:0;z-index:6;background:rgba(21,23,27,.97);border-top:1px solid var(--line);backdrop-filter:blur(6px)}
+.savein{max-width:1180px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+#state{flex:1;min-width:160px;font-size:14px;color:var(--mut)}#state.dirty{color:var(--chg)}
+#state.ok{color:var(--ok)}#state.err{color:var(--err)}
+/* okno potwierdzenia */
+dialog{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:0;max-width:min(720px,94vw);width:100%}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+.dh{padding:14px 16px;border-bottom:1px solid var(--line);font-weight:700}
+.db{padding:12px 16px;max-height:60vh;overflow:auto}
+.df{padding:12px 16px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+table.chg{width:100%;border-collapse:collapse;font-size:13.5px}
+table.chg td{padding:6px 6px;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}
+table.chg td.o{color:#ff9d9d;width:28%}table.chg td.n{color:#9de3bd}table.chg td.k{color:#c9ccd1;width:34%}
+.box{border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:13.5px}
+.box.e{background:#3a1c1c;border:1px solid #6b2a2a}.box.w{background:#3a321c;border:1px solid #6b5a2a}
+.box.i{background:#1c2a3a;border:1px solid #2a4a6b}
+.empty{color:var(--mut);padding:20px;text-align:center}
+@media(max-width:820px){
+ .wrap{grid-template-columns:1fr;gap:10px}
+ header.top{position:static}
+ aside{position:sticky;top:0;z-index:4;background:var(--bg);display:flex;overflow-x:auto;gap:4px;padding:6px 0;margin:0 -16px;padding-left:16px;padding-right:16px;scrollbar-width:none}
+ aside a{white-space:nowrap;flex:none;gap:6px}
+ aside a.on{box-shadow:inset 0 -2px 0 var(--acc)}
+ .field{grid-template-columns:1fr}.field .help{grid-column:1}.field label.l{padding-top:0}
+ .gal{margin-left:0}
+ .savein{gap:8px}#state{flex-basis:100%;font-size:13px}.savein button{flex:1}
+}
+</style></head><body>
+<header class="top"><div class="topin">
+ <span class="brand">szukaj_cpu</span>
+ <nav class="tabs"><a href="/admin/">Obszar detekcji</a><a href="/admin/config" class="on">Konfiguracja</a></nav>
+ <a class="gal" href="/">← galeria</a>
+</div></header>
+<div class="wrap">
+ <aside id="menu"></aside>
+ <main id="panes"><p class="empty">Wczytywanie konfiguracji…</p></main>
+</div>
+<div class="savebar"><div class="savein">
+ <span id="state">Brak zmian</span>
+ <button id="discard" disabled>Odrzuć zmiany</button>
+ <button id="save" class="pri" disabled>Zapisz…</button>
+</div></div>
+<dialog id="dlg"><div class="dh" id="dlgTitle">Zmiany do zapisania</div><div class="db" id="dlgBody"></div>
+<div class="df"><button id="dlgCancel">Anuluj</button><button id="dlgSave">Zapisz</button><button id="dlgSaveRestart" class="pri">Zapisz i zrestartuj usługę</button></div></dialog>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const MASK = "********";
+let FORM = [], COCO = [], restartOk = false, secretsSet = {}, version = "";
+let orig = null, cur = null;          // {values, cameras, clear}
+let active = "cameras";
+
+async function api(path, body) {
+  const o = body ? {method: "POST", headers: {"Content-Type": "application/json", "X-Szukaj": "1"}, body: JSON.stringify(body)} : {};
+  const r = await fetch(path, o);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const e = new Error(j.error || r.status + " " + r.statusText); e.data = j; throw e; }
+  return j;
+}
+const clone = o => JSON.parse(JSON.stringify(o));
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function sec(g) { return g.section || g.id; }
+function human(sec) {
+  if (sec >= 86400 && sec % 3600 === 0) return (sec / 86400).toFixed(sec % 86400 ? 1 : 0) + " d";
+  if (sec >= 3600) return (sec / 3600).toFixed(sec % 3600 ? 1 : 0) + " h";
+  if (sec >= 60) return (sec / 60).toFixed(sec % 60 ? 1 : 0) + " min";
+  return "";
+}
+
+/* ───── menu ───── */
+const GROUPS = () => [{id: "cameras", title: "Kamery"}, ...FORM];
+function buildMenu() {
+  $("menu").innerHTML = GROUPS().map(g => `<a href="#${g.id}" data-g="${g.id}">${esc(g.title)}<span class="badge" id="b_${g.id}"></span></a>`).join("");
+}
+function show(id) {
+  if (!GROUPS().some(g => g.id === id)) id = "cameras";
+  active = id;
+  document.querySelectorAll("aside a").forEach(a => a.classList.toggle("on", a.dataset.g === id));
+  document.querySelectorAll("section.pane").forEach(s => s.classList.toggle("on", s.id === "p_" + id));
+  const a = document.querySelector(`aside a[data-g="${id}"]`); if (a && a.scrollIntoView) a.scrollIntoView({block: "nearest", inline: "nearest"});
+}
+window.addEventListener("hashchange", () => show(location.hash.slice(1)));
+
+/* ───── pola ───── */
+function fieldHTML(g, f) {
+  const s = sec(g), id = `f_${s}_${f.key}`, v = cur.values[s][f.key];
+  let c = "";
+  if (f.type === "bool") c = `<label class="sw"><input type="checkbox" id="${id}" ${v ? "checked" : ""}><span></span></label><span class="hint" id="${id}_t">${v ? "włączone" : "wyłączone"}</span>`;
+  else if (f.type === "select") c = `<select id="${id}">${f.options.map(o => `<option value="${esc(o[0])}" ${o[0] === v ? "selected" : ""}>${esc(o[1])}</option>`).join("")}</select>`;
+  else if (f.type === "int" || f.type === "float") {
+    const st = f.step || (f.type === "int" ? 1 : "any");
+    if (f.slider) c += `<input type="range" id="${id}_r" min="${f.min}" max="${f.max}" step="${st}" value="${v}">`;
+    c += `<input type="number" id="${id}" min="${f.min ?? ""}" max="${f.max ?? ""}" step="${st}" value="${v}">`;
+    if (f.unit) c += `<span class="unit">${esc(f.unit)}</span>`;
+    if (f.unit === "s") c += `<span class="hint" id="${id}_h"></span>`;
+    if (f.options) c += `<span class="quick">${f.options.map(o => `<button type="button" data-v="${o}" data-for="${id}">${o === 0 ? "0 (bez)" : o}</button>`).join("")}</span>`;
+  } else if (f.type === "secret") {
+    const set = secretsSet[`${s}.${f.key}`];
+    c = `<input type="password" id="${id}" autocomplete="new-password" placeholder="${set ? "ustawione – puste = bez zmian" : "nie ustawione"}" value="${esc(v)}">
+      <button type="button" class="sm" data-eye="${id}">pokaż</button>
+      ${set ? `<label class="hint"><input type="checkbox" id="${id}_clr" ${cur.clear[s + "." + f.key] ? "checked" : ""}> usuń</label>` : ""}`;
+  } else if (f.type === "classes") {
+    c = `<div class="chips" id="${id}_chips"></div>
+      <input type="text" id="${id}_add" list="coco" placeholder="dodaj klasę, np. dog" style="flex:1 1 180px">
+      <span class="quick">${["person", "car", "truck", "bicycle", "motorcycle", "dog", "cat"].map(k => `<button type="button" data-cls="${k}" data-for="${id}">+ ${k}</button>`).join("")}</span>`;
+  } else c = `<input type="text" id="${id}" value="${esc(v)}" placeholder="${esc(f.placeholder || "")}" spellcheck="false">`;
+  return `<div class="field" id="${id}_w" data-s="${s}" data-k="${f.key}">
+    <label class="l" for="${id}">${esc(f.label)}<span class="key">${s}.${f.key}</span></label>
+    <div class="ctl">${c}<button type="button" class="link sm reset" data-reset="${s}.${f.key}" title="przywróć wartość z pliku">↺ przywróć</button></div>
+    ${f.help ? `<p class="help">${esc(f.help)}</p>` : ""}</div>`;
+}
+function bindField(g, f) {
+  const s = sec(g), id = `f_${s}_${f.key}`, el = $(id);
+  const set = v => { cur.values[s][f.key] = v; changed(); };
+  if (f.type === "bool") el.onchange = () => { $(id + "_t").textContent = el.checked ? "włączone" : "wyłączone"; set(el.checked); };
+  else if (f.type === "select") el.onchange = () => set(el.value);
+  else if (f.type === "int" || f.type === "float") {
+    const num = () => { const x = el.value === "" ? NaN : Number(el.value); set(isNaN(x) ? el.value : x); if ($(id + "_r")) $(id + "_r").value = el.value; hint(); };
+    const hint = () => {
+      if ($(id + "_h")) $(id + "_h").textContent = human(Number(el.value)) ? "= " + human(Number(el.value)) : "";
+      document.querySelectorAll(`.quick button[data-for="${id}"][data-v]`).forEach(b => b.classList.toggle("on", b.dataset.v === el.value));
+    };
+    el.oninput = num; hint();
+    if ($(id + "_r")) $(id + "_r").oninput = e => { el.value = e.target.value; num(); };
+  } else if (f.type === "secret") {
+    el.oninput = () => set(el.value);
+    const c = $(id + "_clr"); if (c) c.onchange = () => { cur.clear[s + "." + f.key] = c.checked; el.disabled = c.checked; changed(); };
+  } else if (f.type === "classes") {
+    const add = $(id + "_add");
+    const put = k => { k = k.trim(); if (k && !cur.values[s][f.key].includes(k)) { cur.values[s][f.key].push(k); changed(); drawChips(s, f); } };
+    add.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); put(add.value); add.value = ""; } };
+    add.onchange = () => { if (COCO.includes(add.value)) { put(add.value); add.value = ""; } };
+    drawChips(s, f);
+  } else el.oninput = () => set(el.value);
+}
+function drawChips(s, f) {
+  const id = `f_${s}_${f.key}`, list = cur.values[s][f.key];
+  $(id + "_chips").innerHTML = list.length ? list.map((k, i) => `<span class="chip">${esc(k)}${COCO.includes(k) ? "" : ' <span class="hint">(spoza COCO)</span>'}<button type="button" data-rm="${i}" data-for="${id}" aria-label="usuń ${esc(k)}">×</button></span>`).join("")
+    : `<span class="hint">pusta lista – ${f.key === "static_classes" ? "funkcja wyłączona" : "nic nie będzie wykrywane"}</span>`;
+  document.querySelectorAll(`.quick button[data-for="${id}"][data-cls]`).forEach(b => b.classList.toggle("on", list.includes(b.dataset.cls)));
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.eye) { const i = $(b.dataset.eye); i.type = i.type === "password" ? "text" : "password"; b.textContent = i.type === "password" ? "pokaż" : "ukryj"; }
+  if (b.dataset.v !== undefined && b.dataset.for) { const i = $(b.dataset.for); i.value = b.dataset.v; i.dispatchEvent(new Event("input")); }
+  if (b.dataset.cls && b.dataset.for) {
+    const [, s, ...k] = b.dataset.for.split("_"); const key = k.join("_"); const f = findField(s, key);
+    const list = cur.values[s][key], i = list.indexOf(b.dataset.cls);
+    if (i >= 0) list.splice(i, 1); else list.push(b.dataset.cls);
+    drawChips(s, f); changed();
+  }
+  if (b.dataset.rm !== undefined && b.dataset.for) {
+    const [, s, ...k] = b.dataset.for.split("_"); const key = k.join("_");
+    cur.values[s][key].splice(Number(b.dataset.rm), 1); drawChips(s, findField(s, key)); changed();
+  }
+  if (b.dataset.reset) {
+    const [s, key] = b.dataset.reset.split("."); cur.values[s][key] = clone(orig.values[s][key]); delete cur.clear[b.dataset.reset];
+    renderPane(FORM.find(g => sec(g) === s && g.fields.some(f => f.key === key))); changed();
+  }
+});
+function findField(s, key) { for (const g of FORM) if (sec(g) === s) for (const f of g.fields) if (f.key === key) return f; }
+function renderPane(g) {
+  const p = $("p_" + g.id);
+  p.innerHTML = `<h2>${esc(g.title)}</h2><p class="desc">${esc(g.desc || "")}</p>` + g.fields.map(f => fieldHTML(g, f)).join("");
+  g.fields.forEach(f => bindField(g, f));
+}
+
+/* ───── kamery ───── */
+const VENDORS = {
+  dahua: {name: "Dahua / Amcrest / Imou", main: "/cam/realmonitor?channel={ch}&subtype=0", sub: "/cam/realmonitor?channel={ch}&subtype=1"},
+  hik: {name: "Hikvision / Tiandy / Annke", main: "/Streaming/Channels/{ch}01/", sub: "/Streaming/Channels/{ch}02/"},
+  reolink: {name: "Reolink", main: "/h264Preview_{ch2}_main", sub: "/h264Preview_{ch2}_sub"},
+  uniview: {name: "Uniview", main: "/unicast/c{ch}/s0/live", sub: "/unicast/c{ch}/s1/live"},
+};
+function parseUrl(u) {
+  const m = /^rtsps?:\/\/(?:([^:@\/]*)(?::([^\/]*))?@)?([^:\/?#@]+)(?::(\d+))?(.*)$/.exec(u || "");
+  if (!m) return null;
+  let vendor = "", ch = "1";
+  const path = m[5] || "";
+  let x;
+  if ((x = /channel=(\d+)/.exec(path)) && /realmonitor/.test(path)) { vendor = "dahua"; ch = x[1]; }
+  else if ((x = /Streaming\/Channels\/(\d+?)0[12]/i.exec(path))) { vendor = "hik"; ch = x[1]; }
+  else if ((x = /h264Preview_(\d+)_/i.exec(path))) { vendor = "reolink"; ch = String(Number(x[1])); }
+  else if ((x = /unicast\/c(\d+)\//i.exec(path))) { vendor = "uniview"; ch = x[1]; }
+  return {user: decodeURIComponent(m[1] || ""), pw: m[2] ?? "", host: m[3], port: m[4] || "554", vendor, ch};
+}
+function buildUrl(v, kind, w) {
+  const t = VENDORS[v][kind].replace("{ch}", w.ch).replace("{ch2}", String(w.ch).padStart(2, "0"));
+  const cred = w.user ? encodeURIComponent(w.user) + (w.pw ? ":" + w.pw : "") + "@" : "";
+  return `rtsp://${cred}${w.host}${w.port && w.port !== "554" ? ":" + w.port : ":554"}${t}`;
+}
+function camCard(c, i) {
+  const o = c.orig && orig.cameras.find(x => x.orig === c.orig);
+  const p = parseUrl(c.url) || {user: "admin", pw: "", host: "", port: "554", vendor: "dahua", ch: "1"};
+  const pwKnown = p.pw === MASK;
+  return `<div class="cam ${c._del ? "del" : ""}" id="cam_${i}">
+   <div class="chead">
+    <input class="nm" type="text" value="${esc(c.name)}" data-ci="${i}" data-ck="name" aria-label="nazwa kamery" ${c._del ? "disabled" : ""}>
+    ${!c.orig ? '<span class="tag new">nowa</span>' : ""}${c._del ? '<span class="tag off">do usunięcia</span>' : ""}
+    <label class="sw" title="kamera włączona"><input type="checkbox" data-ci="${i}" data-ck="enabled" ${c.enabled ? "checked" : ""} ${c._del ? "disabled" : ""}><span></span></label>
+    <span class="hint">${c.enabled ? "włączona" : "wyłączona"}</span>
+    <span class="sp"></span>
+    ${c.orig && !c._del ? `<a href="/admin/#cam=${encodeURIComponent(c.orig)}" class="hint">obszar detekcji: ${o && (o.has_zone || o.has_crop) ? [o.has_zone && "strefa", o.has_crop && "przycięcie"].filter(Boolean).join(" + ") : "cały kadr"} →</a>` : ""}
+    <button type="button" class="sm ${c._del ? "" : "warn"}" data-del="${i}">${c._del ? "Przywróć" : "Usuń"}</button>
+   </div>
+   <div class="cbody">
+    <div class="row"><label for="u_${i}">Strumień główny – nagrywany</label>
+     <div class="ctl"><input class="url" type="text" id="u_${i}" data-ci="${i}" data-ck="url" value="${esc(c.url)}" placeholder="rtsp://użytkownik:hasło@192.168.0.3:554/…" spellcheck="false">
+     <button type="button" class="sm" data-probe="${i}" data-pk="url">Testuj</button></div>
+     <p class="hint">Z niego są klipy i pełne klatki w galerii.${c.orig ? ` Zapisane hasło jest pokazane jako ${MASK} i zostanie zachowane.` : " Najprościej użyć kreatora poniżej."}</p><div class="probe" id="pr_${i}_url">${(c._pr || {}).url || ""}</div></div>
+    <div class="row"><label for="a_${i}">Strumień do analizy (substream)</label>
+     <div class="ctl"><input class="url" type="text" id="a_${i}" data-ci="${i}" data-ck="analysis_url" value="${esc(c.analysis_url)}" placeholder="puste = analizuj strumień główny" spellcheck="false">
+     <button type="button" class="sm" data-probe="${i}" data-pk="analysis_url">Testuj</button></div>
+     <p class="hint">Lżejszy strumień tylko do wykrywania. W kamerze ustaw dla niego klatkę kluczową (I-frame) co 1 s i wyłącz Smart Codec.</p><div class="probe" id="pr_${i}_analysis_url">${(c._pr || {}).analysis_url || ""}</div></div>
+    <div class="row"><label for="s_${i}">Monitor Shinobi (ID)</label>
+     <div class="ctl"><input type="text" id="s_${i}" data-ci="${i}" data-ck="shinobi_monitor" value="${esc(c.shinobi_monitor)}" placeholder="puste = bez znaczników na osi czasu" style="flex:0 1 340px"></div></div>
+    <details class="wiz" ${!c.orig && !c.url ? "open" : ""}><summary>Kreator adresów RTSP</summary>
+     <div class="grid">
+      <div><label>Producent</label><select id="w_v_${i}">${Object.entries(VENDORS).map(([k, v]) => `<option value="${k}" ${k === (p.vendor || "dahua") ? "selected" : ""}>${v.name}</option>`).join("")}</select></div>
+      <div><label>Adres IP</label><input id="w_h_${i}" type="text" value="${esc(p.host)}" placeholder="192.168.0.3"></div>
+      <div><label>Port RTSP</label><input id="w_p_${i}" type="text" inputmode="numeric" value="${esc(p.port)}"></div>
+      <div><label>Kanał</label><input id="w_c_${i}" type="text" inputmode="numeric" value="${esc(p.ch)}"></div>
+      <div><label>Użytkownik</label><input id="w_u_${i}" type="text" value="${esc(p.user)}" autocomplete="off"></div>
+      <div><label>Hasło</label><input id="w_w_${i}" type="password" value="" autocomplete="new-password" placeholder="${pwKnown ? "bez zmian" : ""}"></div>
+     </div>
+     <p class="hint" style="margin:0 0 8px">Wstawia oba adresy: główny (nagrywany) i substream (analiza). Znaki specjalne w haśle są kodowane automatycznie.</p>
+     <div style="padding-bottom:12px"><button type="button" class="sm pri" data-wiz="${i}">Wstaw adresy</button></div>
+    </details>
+   </div></div>`;
+}
+function renderCams() {
+  $("p_cameras").innerHTML = `<h2>Kamery</h2><p class="desc">Strumienie kamer. Strefę i przycięcie obrazu ustawisz w zakładce <a href="/admin/">Obszar detekcji</a>.</p>` +
+    cur.cameras.map(camCard).join("") + `<button type="button" class="addcam" id="addCam">＋ Dodaj kamerę</button>`;
+  $("addCam").onclick = () => {
+    cur.cameras.push({orig: null, name: "kamera" + (cur.cameras.length + 1), enabled: true, url: "", analysis_url: "", shinobi_monitor: ""});
+    renderCams(); changed(); const n = cur.cameras.length - 1; $("cam_" + n).scrollIntoView({behavior: "smooth", block: "start"});
+  };
+}
+document.addEventListener("input", e => {
+  const t = e.target; if (t.dataset.ci === undefined) return;
+  const c = cur.cameras[Number(t.dataset.ci)];
+  c[t.dataset.ck] = t.type === "checkbox" ? t.checked : t.value;
+  if (t.dataset.ck === "enabled") t.parentElement.nextElementSibling.textContent = t.checked ? "włączona" : "wyłączona";
+  changed();
+});
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.del !== undefined) {
+    const i = Number(b.dataset.del), c = cur.cameras[i];
+    if (!c.orig) cur.cameras.splice(i, 1); else c._del = !c._del;
+    renderCams(); changed();
+  }
+  if (b.dataset.wiz !== undefined) {
+    const i = b.dataset.wiz, c = cur.cameras[i], v = $("w_v_" + i).value;
+    const w = {host: $("w_h_" + i).value.trim(), port: $("w_p_" + i).value.trim() || "554", ch: $("w_c_" + i).value.trim() || "1",
+               user: $("w_u_" + i).value.trim(), pw: $("w_w_" + i).value};
+    if (!/^[\w.-]+$/.test(w.host)) return alert("Podaj adres IP kamery, np. 192.168.0.3");
+    if (!/^\d+$/.test(w.ch) || !/^\d+$/.test(w.port)) return alert("Kanał i port to liczby");
+    const old = parseUrl(c.url);
+    if (w.pw) w.pw = encodeURIComponent(w.pw);
+    else if (old && old.pw === MASK && old.user === w.user && old.host === w.host) w.pw = MASK;
+    c.url = buildUrl(v, "main", w); c.analysis_url = buildUrl(v, "sub", w);
+    $("u_" + i).value = c.url; $("a_" + i).value = c.analysis_url; changed();
+    c._pr = {url: '<span class="hint">Adresy wstawione – sprawdź je przyciskiem „Testuj”.</span>'};
+    $("pr_" + i + "_url").innerHTML = c._pr.url; $("pr_" + i + "_analysis_url").innerHTML = "";
+  }
+  if (b.dataset.probe !== undefined) {
+    const k = b.dataset.pk, c = cur.cameras[b.dataset.probe], url = c[k];
+    const put = h => { c._pr = Object.assign(c._pr || {}, {[k]: h}); const el = $(`pr_${cur.cameras.indexOf(c)}_${k}`); if (el) el.innerHTML = h; };
+    if (!url) return put('<span class="hint">Puste – analizowany będzie strumień główny.</span>');
+    b.disabled = true; put('<span class="hint">Łączenie z kamerą (do ~10 s)…</span>');
+    try {
+      const r = await api("/api/probe", {url, camera: c.orig});
+      const parts = [`${r.codec.toUpperCase()} · ${r.width}×${r.height}`];
+      if (r.fps) parts.push(`${r.fps} kl/s`);
+      let s = `<span class="okk">✓ ${parts.join(" · ")}</span>`;
+      if (r.gop) {
+        s += ` · klatka kluczowa co ${r.gop} s`;
+        const keyMode = cur.values.detection.frame_selection === "keyframes";
+        const forAnalysis = k === "analysis_url" || (k === "url" && !c.analysis_url);
+        if (forAnalysis && keyMode && r.gop > 1.5) s += ` <span class="w">– do analizy w trybie „klatki kluczowe” ustaw w kamerze I-frame co 1 s (teraz analiza tylko co ${r.gop} s)</span>`;
+      } else if (r.keyframes < 2) s += ` <span class="hint">· klatki kluczowe rzadziej niż co 6 s (Smart Codec?)</span>`;
+      if (k === "analysis_url" && r.width > 1280) s += ` <span class="w">– to raczej strumień główny, substream jest zwykle mniejszy</span>`;
+      put(s);
+    } catch (err) { put(`<span class="e">✗ ${esc(err.message)}</span>`); }
+    const nb = document.querySelector(`button[data-probe="${cur.cameras.indexOf(c)}"][data-pk="${k}"]`); if (nb) nb.disabled = false;
+  }
+});
+
+/* ───── stan i zapis ───── */
+function payload() {
+  return {values: cur.values, clear: cur.clear, version,
+          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
+}
+function diffCount() {
+  const n = {};
+  for (const g of FORM) {
+    const s = sec(g); let k = 0;
+    for (const f of g.fields) {
+      const ch = !same(cur.values[s][f.key], orig.values[s][f.key]) || !!cur.clear[s + "." + f.key];
+      const w = $(`f_${s}_${f.key}_w`); if (w) w.classList.toggle("chg", ch);
+      if (f.show_if && w) w.classList.toggle("hide", cur.values[s][f.show_if[0]] !== f.show_if[1]);
+      if (ch) k++;
+    }
+    n[g.id] = k;
+  }
+  let k = 0;
+  cur.cameras.forEach((c, i) => {
+    const o = orig.cameras.find(x => x.orig === c.orig && c.orig);
+    const ch = !o || c._del || ["name", "enabled", "url", "analysis_url", "shinobi_monitor"].some(x => c[x] !== o[x]);
+    const el = $("cam_" + i); if (el) el.classList.toggle("chg", ch);
+    if (ch) k++;
+  });
+  const order = cur.cameras.filter(c => c.orig).map(c => c.orig).join() !== orig.cameras.map(c => c.orig).join();
+  n.cameras = k || (order ? 1 : 0);
+  return n;
+}
+function changed() {
+  const n = diffCount(); let total = 0;
+  for (const [g, k] of Object.entries(n)) { const b = $("b_" + g); if (b) b.textContent = k || ""; total += k; }
+  $("state").className = total ? "dirty" : ""; $("state").textContent = total ? `Niezapisane zmiany: ${total}` : "Brak zmian";
+  $("save").disabled = $("discard").disabled = !total;
+}
+function renderAll() {
+  $("panes").innerHTML = GROUPS().map(g => `<section class="pane" id="p_${g.id}"></section>`).join("");
+  renderCams(); FORM.forEach(renderPane); show(location.hash.slice(1) || active); changed();
+}
+function fmt(v, where) {
+  const [s, k] = (where || "").split(".");
+  const f = FORM.length && k ? findField(s, k) : null;
+  if (f && f.options && f.type === "select") { const o = f.options.find(o => o[0] === v); if (o) return esc(o[1]); }
+  if (v === "" || v === null || v === undefined) return '<span class="hint">(puste)</span>';
+  if (typeof v === "boolean") return v ? "tak" : "nie";
+  if (Array.isArray(v)) return v.length ? esc(v.join(", ")) : '<span class="hint">(pusta lista)</span>';
+  return esc(v);
+}
+$("discard").onclick = () => { if (confirm("Odrzucić wszystkie niezapisane zmiany?")) { cur = clone(orig); renderAll(); } };
+$("save").onclick = async () => {
+  $("dlgTitle").textContent = "Sprawdzanie…"; $("dlgBody").innerHTML = ""; $("dlgSave").disabled = $("dlgSaveRestart").disabled = true;
+  $("dlg").showModal();
+  try {
+    const r = await api("/api/config", Object.assign(payload(), {dry: true}));
+    $("dlgTitle").textContent = `Zmiany do zapisania (${r.changes.length})`;
+    let h = "";
+    if (r.error) h += `<div class="box e"><b>Konfiguracja nie przejdzie kontroli:</b> ${esc(r.error)}</div>`;
+    for (const w of r.warnings || []) h += `<div class="box w">${esc(w)}</div>`;
+    for (const n of r.notes || []) h += `<div class="box i">${esc(n)}</div>`;
+    h += r.changes.length ? `<table class="chg">${r.changes.map(c => `<tr><td class="k">${esc(c.label)}<br><span class="hint">${esc(c.where)}</span></td><td class="o">${fmt(c.old, c.where)}</td><td class="n">${fmt(c.new, c.where)}</td></tr>`).join("")}</table>`
+      : '<p class="hint">Plik się nie zmieni.</p>';
+    if (!restartOk) h += '<p class="hint">Restart z panelu działa tylko, gdy szukaj_cpu działa jako usługa systemd.</p>';
+    else h += '<p class="hint">Zmiany zaczną działać po restarcie usługi (analiza zatrzyma się na ok. 20 s). Poprzednia wersja pliku zostanie zachowana jako .bak.</p>';
+    $("dlgBody").innerHTML = h;
+    $("dlgSave").disabled = !!r.error || !r.changes.length;
+    $("dlgSaveRestart").disabled = !!r.error || !r.changes.length || !restartOk;
+  } catch (e) {
+    $("dlgTitle").textContent = "Błąd"; $("dlgBody").innerHTML = `<div class="box e">${esc(e.message)}</div>`;
+  }
+};
+$("dlgCancel").onclick = () => $("dlg").close();
+async function doSave(restart) {
+  $("dlgSave").disabled = $("dlgSaveRestart").disabled = true;
+  try {
+    const r = await api("/api/config", Object.assign(payload(), {restart}));
+    $("dlg").close();
+    await load(true);
+    if (restart && r.restarting) waitRestart(r.new_port);
+    else { $("state").className = "ok"; $("state").textContent = "Zapisano. Zmiany zadziałają po restarcie usługi."; }
+  } catch (e) { $("dlgBody").insertAdjacentHTML("afterbegin", `<div class="box e">${esc(e.message)}</div>`); }
+}
+$("dlgSave").onclick = () => doSave(false);
+$("dlgSaveRestart").onclick = () => doSave(true);
+async function waitRestart(newPort) {
+  const t0 = Date.now();
+  $("state").className = ""; $("state").textContent = "Restart usługi… (ok. 20 s)";
+  if (newPort && String(newPort) !== location.port) {
+    $("state").innerHTML = `Port panelu zmieniony – po restarcie otwórz <a href="${location.protocol}//${location.hostname}:${newPort}/admin/config">${location.hostname}:${newPort}</a>`;
+    return;
+  }
+  await new Promise(r => setTimeout(r, 4000));
+  const poll = async () => {
+    try { const s = await api("/api/status"); if (s.started * 1000 > t0 - 1000) { await load(true); $("state").className = "ok"; $("state").textContent = "Zapisano, usługa uruchomiona ponownie."; return; } } catch (e) {}
+    if (Date.now() - t0 > 120000) { $("state").className = "err"; $("state").textContent = "Usługa nie wróciła w 2 min – sprawdź journalctl -u szukaj_cpu@…"; return; }
+    setTimeout(poll, 2000);
+  };
+  poll();
+}
+window.addEventListener("beforeunload", e => { if (!$("save").disabled) { e.preventDefault(); e.returnValue = ""; } });
+async function load(keepView) {
+  const j = await api("/api/config");
+  FORM = j.form; COCO = j.coco; restartOk = j.restart; secretsSet = j.secrets; version = j.version;
+  orig = {values: j.values, cameras: j.cameras, clear: {}}; cur = clone(orig);
+  if (!$("coco")) document.body.insertAdjacentHTML("beforeend", `<datalist id="coco">${COCO.map(c => `<option value="${c}">`).join("")}</datalist>`);
+  buildMenu(); renderAll();
+}
+load().catch(e => { $("panes").innerHTML = `<div class="box e">Nie udało się wczytać konfiguracji: ${esc(e.message)}</div>`; });
 </script></body></html>"""
 
 
@@ -1586,6 +2593,51 @@ def start_http(cfg, cams=()):
                 return True
             return False
 
+        def _config(self, body):
+            dry = body.get("dry") is True
+            with CONFIG_LOCK:
+                try:
+                    old, new, changes = plan_config(cfg.path, body)
+                except (ValueError, tomllib.TOMLDecodeError) as e:
+                    return self._send(400, {"error": str(e)})
+                except OSError as e:
+                    return self._send(500, {"error": f"odczyt konfiguracji nieudany: {e}"})
+                if body.get("version") and body["version"] != config_version(old):
+                    return self._send(409, {"error": "plik konfiguracji zmienił się w międzyczasie (np. zapis obszaru "
+                                                     "detekcji lub edycja ręczna) – odśwież stronę i wprowadź zmiany "
+                                                     "ponownie"})
+                err, warns = validate_config_text(new, cfg.path) if new != old else (None, [])
+                try:
+                    nd = tomllib.loads(new).get("gallery", {})
+                except tomllib.TOMLDecodeError as e:
+                    nd, err = {}, err or str(e)
+                notes = []
+                new_port = nd.get("http_port", 0) if isinstance(nd, dict) else 0
+                if new_port != cfg.port:
+                    notes.append("Port panelu zmieni się na " + (str(new_port) if new_port else
+                                 "0 – galeria WWW i ten panel zostaną WYŁĄCZONE") + " po restarcie.")
+                if not (str(nd.get("http_user", "")).strip() and nd.get("http_password", "")):
+                    notes.append("Bez loginu i hasła panel ustawień będzie wyłączony po restarcie "
+                                 "(galeria bez logowania).")
+                if dry:
+                    return self._send(200, {"changes": changes, "error": err, "warnings": warns, "notes": notes})
+                if err:
+                    return self._send(400, {"error": err})
+                if new == old:
+                    return self._send(200, {"ok": True, "changes": [], "restarting": False})
+                try:
+                    write_config(cfg.path, old, new)
+                except OSError as e:
+                    return self._send(500, {"error": f"zapis pliku nieudany: {e}"})
+            log.info("Konfiguracja zapisana z panelu WWW (%s): %s", self.client_address[0],
+                     ", ".join(c["where"] for c in changes) or "bez zmian")
+            restart = body.get("restart") is True and under_systemd
+            self._send(200, {"ok": True, "changes": changes, "restarting": restart,
+                             "new_port": new_port if new_port != cfg.port else None})
+            if restart:
+                log.info("Restart usługi po zmianie konfiguracji")
+                threading.Timer(0.5, STOP.set).start()
+
         def do_HEAD(self):
             if not self._gate():
                 super().do_HEAD()
@@ -1605,6 +2657,16 @@ def start_http(cfg, cams=()):
                 return self._send(301, "", "text/plain", {"Location": "/admin/"})
             if u.path == "/admin/":
                 return self._send(200, ADMIN_HTML, "text/html; charset=utf-8")
+            if u.path in ("/admin/config", "/admin/config/"):
+                return self._send(200, CONFIG_HTML, "text/html; charset=utf-8")
+            if u.path == "/api/config":
+                try:
+                    with CONFIG_LOCK:
+                        view = config_view(cfg.path)
+                except (OSError, tomllib.TOMLDecodeError) as e:
+                    return self._send(500, {"error": f"nie można odczytać konfiguracji: {e}"})
+                view["restart"] = under_systemd
+                return self._send(200, view)
             if u.path == "/api/status":
                 return self._send(200, {"ok": True, "started": START_TIME})
             if u.path == "/api/cameras":
@@ -1649,6 +2711,13 @@ def start_http(cfg, cams=()):
                 except OSError as e:
                     return self._send(500, {"error": f"zapis pliku nieudany: {e}"})
                 return self._send(200, {"ok": True, "toml": snippet})
+            if u.path == "/api/config":
+                return self._config(body)
+            if u.path == "/api/probe":
+                try:
+                    return self._send(200, probe_stream(cfg, str(body.get("url", "")).strip(), body.get("camera")))
+                except (ValueError, OSError, tomllib.TOMLDecodeError) as e:
+                    return self._send(400, {"error": str(e)})
             if u.path == "/api/restart":
                 if not under_systemd:
                     return self._send(409, {"error": "restart działa tylko przy uruchomieniu przez systemd"})
@@ -1663,7 +2732,7 @@ def start_http(cfg, cams=()):
                               functools.partial(Handler, directory=str(cfg.galeria)))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("Galeria WWW: http://<adres-serwera>:%d/%s", cfg.port,
-             "  (panel obszaru detekcji: /admin/, logowanie)" if admin_on
+             "  (panel ustawień: /admin/ i /admin/config, logowanie)" if admin_on
              else "  (panel /admin/ wyłączony – ustaw http_user i http_password)")
 
 
