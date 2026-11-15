@@ -13,14 +13,28 @@ configure)
     fi
     [ -x "$VENV/bin/python" ] || python3 -m venv "$VENV"
     if [ "${SZUKAJ_CPU_SKIP_PIP:-0}" != 1 ]; then
-        echo "szukaj-cpu: instalacja zależności Pythona (OpenVINO, OpenCV) – wymaga internetu"
-        if ! { "$VENV/bin/pip" install -q --disable-pip-version-check --upgrade pip &&
-               "$VENV/bin/pip" install -q --disable-pip-version-check -r "$DIR/requirements.txt"; }; then
-            echo "szukaj-cpu: nie udało się pobrać zależności Pythona (brak internetu / PyPI?)." >&2
-            echo "  Po naprawie połączenia dokończ instalację:  sudo dpkg --configure -a" >&2
-            exit 1
+        PIPQ="$VENV/bin/pip install -q --disable-pip-version-check"
+        OFFLINE=0
+        if ls "$DIR"/wheels/*.whl >/dev/null 2>&1; then
+            # pakiet z dołączonymi kołami: bez internetu
+            echo "szukaj-cpu: instalacja zależności Pythona z pakietu (bez internetu)"
+            if $PIPQ --no-index --find-links "$DIR/wheels" -r "$DIR/requirements.txt"; then
+                OFFLINE=1
+            else
+                echo "szukaj-cpu: koła z pakietu nie pasują do tego Pythona ($PYVER, pakiet: $(cat "$DIR/wheels/PYTHON" 2>/dev/null)) – pobieram z PyPI" >&2
+            fi
+        fi
+        if [ "$OFFLINE" = 0 ]; then
+            echo "szukaj-cpu: instalacja zależności Pythona (OpenVINO, OpenCV) – wymaga internetu"
+            if ! { $PIPQ --upgrade pip && $PIPQ -r "$DIR/requirements.txt"; }; then
+                echo "szukaj-cpu: nie udało się pobrać zależności Pythona (brak internetu / PyPI?)." >&2
+                echo "  Po naprawie połączenia dokończ instalację:  sudo dpkg --configure -a" >&2
+                exit 1
+            fi
         fi
     fi
+    # skompilowane moduły (usługa działa jako zwykły użytkownik i nie może ich zapisać w /opt)
+    "$VENV/bin/python" -m compileall -q "$DIR/szukaj_cpu" >/dev/null 2>&1 || true
 
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload || true
@@ -36,7 +50,7 @@ configure)
 szukaj-cpu zainstalowany w /opt/szukaj_cpu. Dalej (jako zwykły użytkownik):
   szukaj-cpu --init                          # ~/.szukaj_cpu/szukaj_cpu.toml z szablonu
   nano ~/.szukaj_cpu/szukaj_cpu.toml         # kamery, galeria, Shinobi, ntfy
-  sudo szukaj-cpu-export-tools install       # tylko jeśli nie masz jeszcze modelu OpenVINO
+  # modele FP32/INT8 są w pakiecie (/opt/szukaj_cpu/models); własny eksport: szukaj-cpu-export-tools
   szukaj-cpu --test
   sudo systemctl enable --now szukaj_cpu@$USER
 Lokalny serwer powiadomień: sudo bash /opt/szukaj_cpu/ntfy/setup-ntfy.sh --config ~/.szukaj_cpu/szukaj_cpu.toml

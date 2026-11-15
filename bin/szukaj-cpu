@@ -1,3 +1,3 @@
 #!/bin/sh
 # Uruchamia szukaj_cpu z własnego środowiska Pythona w /opt/szukaj_cpu.
-exec /opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/szukaj_cpu.py "$@"
+exec /opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/run.py "$@"

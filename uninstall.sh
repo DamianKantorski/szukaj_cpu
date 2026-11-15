@@ -147,7 +147,7 @@ if [ "$DO_LEGACY" = 1 ] && [ "$MIGRATE" = 1 ] && ! dpkg -s szukaj-cpu >/dev/null
     HERE="$(cd "$(dirname "$0")" && pwd)"
     echo "Dalej:"
     echo "  bash $HERE/packaging/build-deb.sh            # jeśli pakiet nie jest jeszcze zbudowany"
-    echo "  sudo apt install $HERE/dist/szukaj-cpu_*_all.deb"
+    echo "  sudo apt install $HERE/dist/szukaj-cpu_*.deb"
     echo "  szukaj-cpu --test"
     echo "  sudo systemctl enable --now szukaj_cpu@$USR"
     echo "Nieużywane modele w ~/.szukaj_cpu/models (inne niż ustawione w imgsz) można usunąć."

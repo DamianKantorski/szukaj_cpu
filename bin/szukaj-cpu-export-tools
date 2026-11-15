@@ -10,12 +10,13 @@ case "${1:-status}" in
         [ "$(id -u)" -eq 0 ] || { echo "Uruchom przez sudo." >&2; exit 1; }
         echo "==> PyTorch (CPU) i Ultralytics – kilkaset MB"
         "$PIP" install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        "$PIP" install -q ultralytics
-        echo "Gotowe. Uruchom test (wyeksportuje model):  szukaj-cpu --test"
+        "$PIP" install -q ultralytics nncf
+        echo "Gotowe. Brakujący model (FP32 albo INT8) zostanie wyeksportowany przy:  szukaj-cpu --test"
+        echo "Ręcznie: /opt/szukaj_cpu/venv/bin/python /opt/szukaj_cpu/tools/export_models.py --sizes 960x544 --out ~/.szukaj_cpu/models"
         ;;
     remove)
         [ "$(id -u)" -eq 0 ] || { echo "Uruchom przez sudo." >&2; exit 1; }
-        "$PIP" uninstall -y -q ultralytics ultralytics-thop torch torchvision 2>/dev/null || true
+        "$PIP" uninstall -y -q ultralytics ultralytics-thop torch torchvision nncf 2>/dev/null || true
         echo "Usunięto narzędzia eksportu (gotowe modele w ~/.szukaj_cpu/models zostają)."
         ;;
     status)
