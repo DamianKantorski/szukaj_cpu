@@ -21,6 +21,9 @@ Environment=MALLOC_MMAP_THRESHOLD_=1048576
 Environment=MALLOC_TRIM_THRESHOLD_=4194304
 Restart=always
 RestartSec=15
+# SIGTERM tylko do szukaj_cpu – sam zatrzymuje ffmpeg i go2rtc i domyka pliki nagrań
+KillMode=mixed
+TimeoutStopSec=60
 # bez limitu rdzeni; niższy priorytet sprawia, że Shinobi zawsze ma pierwszeństwo
 Nice=10
 MemoryMax=3G

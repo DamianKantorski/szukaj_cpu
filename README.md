@@ -38,6 +38,7 @@ events ──► gallery (index.html, wyniki.csv, thumbnails, clips, full frames
 | `/opt/szukaj_cpu/models/` | bundled OpenVINO models: FP32 and INT8 (full package) |
 | `/opt/szukaj_cpu/wheels/` | Python wheels for the offline install (full package) |
 | `/opt/szukaj_cpu/ffmpeg`, `ffprobe` | static ffmpeg built with the package (full package) |
+| `/opt/szukaj_cpu/go2rtc` | go2rtc (full package) |
 | `/usr/bin/szukaj-cpu` | launcher (`--init`, `--test`, `--version`) |
 | `/usr/bin/szukaj-cpu-export-tools` | optional model-export tools (Ultralytics + PyTorch + NNCF) |
 | `/usr/lib/systemd/system/szukaj_cpu@.service` | service, one instance per user |
@@ -54,6 +55,8 @@ src/szukaj_cpu/
   config.py    reading and checking szukaj_cpu.toml
   camera.py    ffmpeg commands, frame reader, segment buffer, watchdog
   detector.py  YOLO in OpenVINO (FP32/INT8) or PyTorch, model lookup, zone/crop, drawing
+  go2rtc.py    go2rtc child process: config, restream URLs, supervision
+  recorder.py  continuous recording: finalizing files, retention
   export.py    YOLO -> OpenVINO export (FP32, INT8 via NNCF)
   events.py    events, parked-vehicle filter
   gallery.py   HTML gallery, CSV, retention
@@ -75,13 +78,14 @@ server needs no internet access to install it:
 
 * Python wheels (OpenVINO, OpenCV, NumPy) for Debian 13's Python – installed offline,
 * YOLO11s and YOLO26s OpenVINO models, **FP32 and INT8**, for `MODEL_SIZES` (default `960x544`),
-* `ffmpeg`/`ffprobe` compiled on the build machine (`tools/build_ffmpeg.sh`, `-march=skylake`).
+* `ffmpeg`/`ffprobe` compiled on the build machine (`tools/build_ffmpeg.sh`, `-march=skylake`),
+* `go2rtc` (camera restream; from the project's releases, `GO2RTC_VERSION`).
 
 Everything is built in a Debian 13 container, so the build machine only needs Docker or
 Podman (e.g. CachyOS: `sudo pacman -S podman`; WSL/Ubuntu: `sudo apt install podman`):
 
 ```bash
-bash packaging/build-deb.sh                     # → dist/szukaj-cpu_1.3.0_amd64.deb
+bash packaging/build-deb.sh                     # → dist/szukaj-cpu_1.9.0_amd64.deb
 bash packaging/build-deb.sh --calib ~/frames    # INT8 calibrated on frames from your cameras
 MODEL_SIZES="960x544 640x384" bash packaging/build-deb.sh
 bash packaging/build-deb.sh --slim              # program only; install downloads dependencies
@@ -95,7 +99,7 @@ for the export, quantization), later builds take a minute. `--rebuild-ffmpeg`,
 ### Installing
 
 ```bash
-sudo apt install ./szukaj-cpu_1.3.0_amd64.deb
+sudo apt install ./szukaj-cpu_1.9.0_amd64.deb
 szukaj-cpu --init                       # creates ~/.szukaj_cpu/szukaj_cpu.toml
 nano ~/.szukaj_cpu/szukaj_cpu.toml      # cameras, gallery path, Shinobi, ntfy (or use the web panel)
 sudo usermod -aG render,video $USER     # iGPU access (log in again)
@@ -112,7 +116,7 @@ install falls back to downloading them from PyPI.
 ```bash
 bash uninstall.sh          # stops szukaj_cpu.service, moves config, models and static
                            # ffmpeg to ~/.szukaj_cpu, removes ~/szukaj_cpu
-sudo apt install ./szukaj-cpu_1.3.0_amd64.deb
+sudo apt install ./szukaj-cpu_1.9.0_amd64.deb
 sudo systemctl enable --now szukaj_cpu@$USER
 ```
 
@@ -157,6 +161,28 @@ departure and movement still raise events. The list survives restarts
 * `crop = [x1, y1, x2, y2]` – rectangle; only this part of the frame goes to the model.
   Smaller area = people appear larger to the model, so distant figures are detected better.
   `[]` = whole frame.
+
+## Recording and go2rtc (replacing Shinobi)
+
+Since 1.9 szukaj_cpu can record continuously and needs only one connection per camera
+stream. It is the first step to replacing Shinobi (and Home Assistant for HomeKit); a
+recordings page with a timeline, live view in the browser and HomeKit follow.
+
+* **go2rtc** (bundled, `[go2rtc]`) connects to each camera stream once and restreams it
+  locally – `rtsp://127.0.0.1:8554/<camera>` and `/<camera>_sub`. Detection, the clip buffer
+  and recording read from there. Without it every process connects to the camera itself.
+* **Recording** (`[recording] enabled = true`) writes the main stream without re-encoding,
+  in files of `segment_minutes` starting on full clock minutes, where Shinobi kept them and
+  with the same names: `<recordings>/<group_key>/<shinobi_monitor>/2026-11-19T17-30-00.mp4`.
+  The recording process is the same one that fills the clip buffer – one connection, two
+  outputs. A file being written is a fragmented MP4 in `.nagrywanie/` (survives a power cut);
+  once closed it is rewritten (stream copy, low priority) to a normal MP4 with the index at
+  the start, which browsers play and seek best.
+* Retention: files older than `retention_days` are deleted, and when the disk has less than
+  `min_free_gb` free the oldest recordings of all cameras go first (Shinobi files in the same
+  directories included).
+* The service user must be able to write to the Shinobi directories:
+  `sudo chown -R $USER: /path/to/videos/GROUP_KEY` – the log says so when it cannot.
 
 ## Models: YOLO11 / YOLO26, FP32 / INT8
 

@@ -100,7 +100,9 @@ SCHEMA = {
                 "full_quality", "thumb_width"},
     "notifications": {"ntfy_url", "min_interval", "ntfy_token", "priority", "click_url"},
     "shinobi": {"url", "api_key", "group_key", "repeat_seconds"},
-    "camera": {"name", "url", "analysis_url", "enabled", "zone", "crop", "shinobi_monitor"},
+    "recording": {"enabled", "segment_minutes", "retention_days", "min_free_gb", "audio"},
+    "go2rtc": {"enabled", "binary", "api_port", "rtsp_port", "rtsp_listen", "webrtc_port"},
+    "camera": {"name", "url", "analysis_url", "enabled", "zone", "crop", "shinobi_monitor", "record", "record_dir"},
 }
 
 
@@ -219,6 +221,25 @@ def load_config(path):
     c.sh_repeat = get("shinobi", "repeat_seconds", 30.0, float)
     c.shinobi = bool(c.sh_url and c.sh_api and c.sh_group)
 
+    # zapis ciągły na dysk (zamiast Shinobi)
+    c.rec = get("recording", "enabled", False, bool)
+    c.rec_min = get("recording", "segment_minutes", 15, int)
+    if not 1 <= c.rec_min <= 60:
+        sys.exit(f"{path}: [recording] segment_minutes must be 1–60")
+    c.rec_days = get("recording", "retention_days", 14.0, float)
+    c.rec_free = get("recording", "min_free_gb", 50.0, float)
+    c.rec_audio = get("recording", "audio", False, bool)
+    if c.rec and c.nagrania is None:
+        sys.exit(f"{path}: [recording] enabled needs [paths] recordings")
+
+    # go2rtc: jedno połączenie z kamerą na strumień, dalej lokalny restream
+    c.g2r = get("go2rtc", "enabled", True, bool)
+    c.g2r_bin = get("go2rtc", "binary", "auto", str).strip() or "auto"
+    c.g2r_api = get("go2rtc", "api_port", 1984, int)
+    c.g2r_rtsp = get("go2rtc", "rtsp_port", 8554, int)
+    c.g2r_listen = get("go2rtc", "rtsp_listen", "127.0.0.1", str).strip() or "127.0.0.1"
+    c.g2r_webrtc = get("go2rtc", "webrtc_port", 8555, int)
+
     c.cams = []
     cams = data.get("camera", [])
     if not isinstance(cams, list):
@@ -234,10 +255,19 @@ def load_config(path):
             continue
         if any(x.name == name for x in c.cams):
             sys.exit(f"{where}: duplicate camera name '{name}'")
+        monitor = str(cam.get("shinobi_monitor", "")).strip()
+        record = cam.get("record", True)
+        if not isinstance(record, bool):
+            sys.exit(f"{where}: record must be true or false")
+        rdir = expand(str(cam.get("record_dir", "")).strip())
+        if rdir is None and c.nagrania is not None:
+            # jak w Shinobi: <nagrania>/<klucz grupy>/<ID monitora>; bez nich <nagrania>/<nazwa>
+            rdir = c.nagrania / c.sh_group / monitor if (c.sh_group and monitor) else c.nagrania / name
         c.cams.append(SimpleNamespace(name=name, url=url, zone=parse_zone(cam.get("zone", []), where),
-                                      monitor=str(cam.get("shinobi_monitor", "")).strip(),
+                                      monitor=monitor,
                                       analysis_url=str(cam.get("analysis_url", "")).strip(),
-                                      crop=parse_crop(cam.get("crop", []), where)))
+                                      crop=parse_crop(cam.get("crop", []), where),
+                                      record=record and c.rec, record_dir=rdir))
     if not c.cams:
         sys.exit(f"{path}: no cameras configured – fill in url in the [[camera]] blocks")
     return c

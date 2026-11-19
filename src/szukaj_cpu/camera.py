@@ -102,10 +102,29 @@ def segment_output(cfg, cam):
             "-reset_timestamps", "1", "-strftime", "1", str(cam.buf / "%Y%m%d-%H%M%S.ts")]
 
 
+def record_output(cfg, cam):
+    """Zapis ciągły na dysk: pliki co segment_minutes (pełne minuty zegara), nazwy jak w Shinobi.
+    Plik w trakcie zapisu jest fragmentowanym MP4 w katalogu .nagrywanie (odporny na przerwanie),
+    po zamknięciu Recorder przepisuje go (bez kodowania) do zwykłego MP4 obok."""
+    out = ["-map", "0:v:0"]
+    out += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k"] if cfg.rec_audio else ["-an"]
+    out += ["-c:v", "copy", "-f", "segment", "-segment_time", str(cfg.rec_min * 60), "-segment_atclocktime", "1",
+            "-reset_timestamps", "1", "-strftime", "1", "-segment_format", "mp4",
+            "-segment_format_options", "movflags=+frag_keyframe+empty_moov+default_base_moof",
+            str(cam.staging / "%Y-%m-%dT%H-%M-%S.mp4")]
+    return out
+
+
 def build_rec_cmd(cfg, cam):
-    """Osobny proces: kopia strumienia głównego do bufora segmentów (klipy, pełne klatki)."""
-    return ([cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
-            + src_opts(cam.url) + ["-i", cam.url] + segment_output(cfg, cam))
+    """Osobny proces na strumień główny (tylko kopia, bez dekodowania): bufor segmentów w RAM
+    (klipy, pełne klatki) i/lub zapis ciągły na dysk – jedno połączenie, dwa wyjścia."""
+    c = ([cfg.ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin"]
+         + src_opts(cam.url) + ["-i", cam.url])
+    if cam.rec_buffer:
+        c += segment_output(cfg, cam)
+    if cam.record:
+        c += record_output(cfg, cam)
+    return c
 
 
 class Camera:
@@ -116,6 +135,11 @@ class Camera:
         self.crop = spec.crop
         self.snap = None            # ostatnia klatka analizy (podgląd w panelu WWW)
         self.separate = bool(spec.analysis_url) and spec.analysis_url != spec.url
+        self.src_url, self.src_analysis = spec.url, spec.analysis_url     # adresy kamery (go2rtc zmienia url)
+        self.record = getattr(spec, "record", False)
+        self.record_dir = getattr(spec, "record_dir", None)
+        self.staging = self.record_dir / ".nagrywanie" if self.record_dir else None
+        self.rec_buffer = cfg.clips and self.separate      # bufor klipów w procesie nagrywania
         self.rec_proc = None
         self.rec_err = deque(maxlen=10)
         self.buf = cfg.bufor / self.name
@@ -176,7 +200,7 @@ class Camera:
                      self.name, src, w, h, an_codec, ow, oh, fixed, label)
             started = time.time()
             got = self._run(build_cmd(cfg, self, mode, ow, oh, self.hw_select), ow, oh, label)
-            if STOP.is_set():
+            if STOP.wait(0.5):
                 break
             if mode == "vaapi":
                 if got == 0:
@@ -252,11 +276,13 @@ class Camera:
         return got
 
     def rec_loop(self):
-        """Bufor klipów ze strumienia głównego – osobny proces ffmpeg (tylko kopia, bez dekodowania)."""
+        """Strumień główny – osobny proces ffmpeg (tylko kopia): bufor klipów i/lub zapis na dysk."""
         unpin()
         backoff = 5
         while not STOP.is_set():
             self.buf.mkdir(parents=True, exist_ok=True)
+            if self.record:
+                self.staging.mkdir(parents=True, exist_ok=True)
             started = time.time()
             self.rec_err.clear()
             proc = subprocess.Popen(build_rec_cmd(self.cfg, self), stdout=subprocess.DEVNULL,
@@ -266,11 +292,11 @@ class Camera:
                 self.rec_err.append(line.decode(errors="replace").strip())
             proc.wait()
             self.rec_proc = None
-            if STOP.is_set():
+            if STOP.wait(1):
                 break
             if time.time() - started > 60:
                 backoff = 5
-            log.warning("[%s] bufor klipów (strumień główny) przerwany po %.0f s – ponownie za %d s: %s",
+            log.warning("[%s] zapis strumienia głównego przerwany po %.0f s – ponownie za %d s: %s",
                         self.name, time.time() - started, backoff, self.rec_err[-1] if self.rec_err else "")
             STOP.wait(backoff)
             backoff = min(backoff * 2, 60)
@@ -282,16 +308,27 @@ class Camera:
             p.kill()
         r = self.rec_proc
         if r is not None and r.poll() is None:
-            segs = list_segments(self.buf)
             try:
-                newest = max((p.stat().st_mtime for _, p in segs), default=0)
+                if self.rec_buffer:
+                    newest = max((p.stat().st_mtime for _, p in list_segments(self.buf)), default=0)
+                    limit = max(self.cfg.watchdog, 4 * self.cfg.seg)
+                else:
+                    newest = max((p.stat().st_mtime for p in self.staging.glob("*.mp4")), default=0)
+                    limit = max(self.cfg.watchdog, 60)        # fragmenty MP4 dopisywane co klatkę kluczową
             except OSError:
-                newest = now
-            if newest and now - newest > max(self.cfg.watchdog, 4 * self.cfg.seg):
-                log.warning("[%s] bufor klipów nie rośnie od %.0f s – restart", self.name, now - newest)
-                r.kill()
+                newest, limit = now, 1
+            if newest and now - newest > limit:
+                log.warning("[%s] zapis strumienia głównego nie rośnie od %.0f s – restart", self.name, now - newest)
+                r.terminate()
 
     def stop(self):
-        for p in (self.proc, self.rec_proc):
-            if p is not None and p.poll() is None:
-                p.kill()
+        p = self.proc
+        if p is not None and p.poll() is None:
+            p.kill()
+        r = self.rec_proc
+        if r is not None and r.poll() is None:
+            r.terminate()                 # ffmpeg zamyka bieżący plik nagrania
+            try:
+                r.wait(5)
+            except subprocess.TimeoutExpired:
+                r.kill()

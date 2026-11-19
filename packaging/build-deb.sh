@@ -5,7 +5,8 @@
 #  Pełny pakiet (domyślnie) zawiera wszystko, co wcześniej instalacja pobierała z sieci:
 #    • koła Pythona (OpenVINO, OpenCV, NumPy) dla Pythona z Debiana 13 – instalacja offline,
 #    • modele YOLO OpenVINO (MODELS: YOLO11s i YOLO26s): FP32 i INT8 (NNCF) dla MODEL_SIZES,
-#    • ffmpeg/ffprobe skompilowane na tym komputerze (tools/build_ffmpeg.sh, -march=$MARCH).
+#    • ffmpeg/ffprobe skompilowane na tym komputerze (tools/build_ffmpeg.sh, -march=$MARCH),
+#    • go2rtc (restream kamer, podgląd, HomeKit) – plik z wydań projektu, wersja GO2RTC_VERSION.
 #  Wszystko powstaje w kontenerze Debiana 13 (Docker albo Podman), więc na komputerze
 #  budującym (np. CachyOS, WSL) wystarczy kontener – bez Pythona, dpkg ani kompilatorów.
 #  Wyniki pośrednie są w build/ (pamięć podręczna): ponowne budowanie trwa chwilę,
@@ -18,10 +19,11 @@
 #  Opcje:
 #    --rebuild-ffmpeg | --rebuild-models | --rebuild-wheels | --rebuild-all
 #    --no-container      buduj bez kontenera (Debian 13 albo zgodny system z apt)
-#    --no-ffmpeg | --no-models | --no-wheels   pomiń składnik
+#    --no-ffmpeg | --no-models | --no-wheels | --no-go2rtc   pomiń składnik
 #  Zmienne:
 #    MODELS="yolo11s.pt yolo26s.pt"  MODEL_SIZES="960x544 640x384"  MARCH=skylake  JOBS=…  LTO=1
 #    FFMPEG_VERSION=n8.0  JXL_VERSION=v0.11.1   (domyślnie najnowsze wydania)
+#    GO2RTC_VERSION=1.9.15
 #    IMAGE=debian:trixie   BUILD_CA_CERT=/ścieżka/ca.crt (gdy sieć ma własny certyfikat proxy)
 # ════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -33,7 +35,8 @@ MODELS="${MODELS:-${MODEL:-yolo11s.pt yolo26s.pt}}"
 MARCH="${MARCH:-skylake}"
 
 SLIM=0 INSIDE=0 NO_CONTAINER=0 CALIB=""
-DO_FFMPEG=1 DO_MODELS=1 DO_WHEELS=1
+DO_FFMPEG=1 DO_MODELS=1 DO_WHEELS=1 DO_GO2RTC=1
+GO2RTC_VERSION="${GO2RTC_VERSION:-1.9.15}"
 RB_FFMPEG=0 RB_MODELS=0 RB_WHEELS=0
 ARGS=("$@")
 while [ $# -gt 0 ]; do
@@ -49,13 +52,14 @@ while [ $# -gt 0 ]; do
         --no-ffmpeg) DO_FFMPEG=0 ;;
         --no-models) DO_MODELS=0 ;;
         --no-wheels) DO_WHEELS=0 ;;
+        --no-go2rtc) DO_GO2RTC=0 ;;
         -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
         *) echo "Nieznana opcja: $1" >&2; exit 2 ;;
     esac
     shift
 done
-[ "$SLIM" = 1 ] && { DO_FFMPEG=0; DO_MODELS=0; DO_WHEELS=0; }
-FULL=$(( DO_FFMPEG || DO_MODELS || DO_WHEELS ))
+[ "$SLIM" = 1 ] && { DO_FFMPEG=0; DO_MODELS=0; DO_WHEELS=0; DO_GO2RTC=0; }
+FULL=$(( DO_FFMPEG || DO_MODELS || DO_WHEELS || DO_GO2RTC ))
 B="$ROOT/build"
 
 # ───────────────────────── uruchomienie w kontenerze ─────────────────────────
@@ -71,7 +75,7 @@ if [ "$INSIDE" = 0 ] && [ "$NO_CONTAINER" = 0 ] && { [ "$FULL" = 1 ] || ! comman
     VOL=(-v "$ROOT:/src")
     ENVS=(-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e MODEL_SIZES="$MODEL_SIZES" -e MODELS="$MODELS"
           -e MARCH="$MARCH" -e JOBS="${JOBS:-}" -e LTO="${LTO:-0}"
-          -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}")
+          -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}" -e GO2RTC_VERSION="$GO2RTC_VERSION")
     INNER=()
     for a in "${ARGS[@]}"; do INNER+=("$a"); done
     if [ -n "$CALIB" ]; then
@@ -191,7 +195,20 @@ if [ "$DO_FFMPEG" = 1 ]; then
     echo "    $("$FF/ffmpeg" -hide_banner -version | head -1)"
 fi
 
-# ── 4. pakiet ──
+# ── 4. go2rtc ──
+G2R="$B/go2rtc/go2rtc-$GO2RTC_VERSION"
+if [ "$DO_GO2RTC" = 1 ]; then
+    if [ ! -x "$G2R" ]; then
+        echo "==> go2rtc $GO2RTC_VERSION"
+        mkdir -p "$B/go2rtc"
+        curl -fsSL -o "$G2R.tmp" \
+            "https://github.com/AlexxIT/go2rtc/releases/download/v$GO2RTC_VERSION/go2rtc_linux_amd64"
+        chmod 755 "$G2R.tmp" && mv "$G2R.tmp" "$G2R"
+    fi
+    echo "    $("$G2R" -version | head -1)"
+fi
+
+# ── 5. pakiet ──
 ARCH=all
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"; own "$B" "$ROOT/dist"' EXIT
@@ -238,6 +255,12 @@ weights (https://github.com/ultralytics/ultralytics), which are licensed under A
 INT8 variants were quantized with OpenVINO NNCF.
 EOF
     CONTENTS+=("YOLO models: $(cd "$OPT/models" && ls -d *_openvino_model | tr '\n' ' ')")
+fi
+if [ "$DO_GO2RTC" = 1 ]; then
+    install -m 755 "$G2R" "$OPT/go2rtc"
+    printf 'go2rtc %s – https://github.com/AlexxIT/go2rtc (MIT license)\n' "$GO2RTC_VERSION" > "$DOC/GO2RTC.txt"
+    ARCH=amd64
+    CONTENTS+=("go2rtc $GO2RTC_VERSION (camera restream)")
 fi
 if [ "$DO_FFMPEG" = 1 ]; then
     install -m 755 "$FF/ffmpeg" "$FF/ffprobe" "$OPT/"
