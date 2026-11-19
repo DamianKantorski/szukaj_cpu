@@ -308,7 +308,12 @@ function camCard(c, i) {
      <button type="button" class="sm" data-probe="${i}" data-pk="analysis_url">Testuj</button></div>
      <p class="hint">Lżejszy strumień tylko do wykrywania. W kamerze ustaw dla niego klatkę kluczową (I-frame) co 1 s i wyłącz Smart Codec.</p><div class="probe" id="pr_${i}_analysis_url">${(c._pr || {}).analysis_url || ""}</div></div>
     <div class="row"><label for="s_${i}">Monitor Shinobi (ID)</label>
-     <div class="ctl"><input type="text" id="s_${i}" data-ci="${i}" data-ck="shinobi_monitor" value="${esc(c.shinobi_monitor)}" placeholder="puste = bez znaczników na osi czasu" style="flex:0 1 340px"></div></div>
+     <div class="ctl"><input type="text" id="s_${i}" data-ci="${i}" data-ck="shinobi_monitor" value="${esc(c.shinobi_monitor)}" placeholder="puste = bez znaczników na osi czasu" style="flex:0 1 340px"></div>
+     <p class="hint">ID monitora wyznacza też katalog nagrań (jak w Shinobi).</p></div>
+    <div class="row"><label>Nagrywanie na dysk</label>
+     <div class="ctl"><label class="sw" title="nagrywaj tę kamerę"><input type="checkbox" data-ci="${i}" data-ck="record" ${c.record !== false ? "checked" : ""} ${c._del ? "disabled" : ""}><span></span></label>
+     <span class="hint">${c.record !== false ? "nagrywa" : "nie nagrywa"}${cur.values.recording && !cur.values.recording.enabled ? " (nagrywanie wyłączone w zakładce Nagrywanie)" : ""}</span></div>
+     ${c.record_dir ? `<p class="hint">Katalog: <code>${esc(c.record_dir)}</code></p>` : ""}</div>
     <details class="wiz" ${!c.orig && !c.url ? "open" : ""}><summary>Kreator adresów RTSP</summary>
      <div class="grid">
       <div><label>Producent</label><select id="w_v_${i}">${Object.entries(VENDORS).map(([k, v]) => `<option value="${k}" ${k === (p.vendor || "dahua") ? "selected" : ""}>${v.name}</option>`).join("")}</select></div>
@@ -327,7 +332,7 @@ function renderCams() {
   $("p_cameras").innerHTML = `<h2>Kamery</h2><p class="desc">Strumienie kamer. Strefę i przycięcie obrazu ustawisz w zakładce <a href="/admin/">Obszar detekcji</a>.</p>` +
     cur.cameras.map(camCard).join("") + `<button type="button" class="addcam" id="addCam">＋ Dodaj kamerę</button>`;
   $("addCam").onclick = () => {
-    cur.cameras.push({orig: null, name: "kamera" + (cur.cameras.length + 1), enabled: true, url: "", analysis_url: "", shinobi_monitor: ""});
+    cur.cameras.push({orig: null, name: "kamera" + (cur.cameras.length + 1), enabled: true, record: true, url: "", analysis_url: "", shinobi_monitor: ""});
     renderCams(); changed(); const n = cur.cameras.length - 1; $("cam_" + n).scrollIntoView({behavior: "smooth", block: "start"});
   };
 }
@@ -336,6 +341,7 @@ document.addEventListener("input", e => {
   const c = cur.cameras[Number(t.dataset.ci)];
   c[t.dataset.ck] = t.type === "checkbox" ? t.checked : t.value;
   if (t.dataset.ck === "enabled") t.parentElement.nextElementSibling.textContent = t.checked ? "włączona" : "wyłączona";
+  if (t.dataset.ck === "record") t.parentElement.nextElementSibling.textContent = t.checked ? "nagrywa" : "nie nagrywa";
   changed();
 });
 document.addEventListener("click", async e => {
@@ -385,7 +391,7 @@ document.addEventListener("click", async e => {
 /* ───── stan i zapis ───── */
 function payload() {
   return {values: cur.values, clear: cur.clear, version,
-          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
+          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, record: c.record !== false, url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
 }
 function diffCount() {
   const n = {};
@@ -402,7 +408,7 @@ function diffCount() {
   let k = 0;
   cur.cameras.forEach((c, i) => {
     const o = orig.cameras.find(x => x.orig === c.orig && c.orig);
-    const ch = !o || c._del || ["name", "enabled", "url", "analysis_url", "shinobi_monitor"].some(x => c[x] !== o[x]);
+    const ch = !o || c._del || ["name", "enabled", "record", "url", "analysis_url", "shinobi_monitor"].some(x => c[x] !== o[x]);
     const el = $("cam_" + i); if (el) el.classList.toggle("chg", ch);
     if (ch) k++;
   });

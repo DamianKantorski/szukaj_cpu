@@ -105,6 +105,35 @@ FORM = [
           "Nieruchomy obiekt niewidziany przez ten czas jest zapominany (21600 s = 6 h).",
           min=60, max=604800, unit="s"),
     ]},
+    {"id": "recording", "title": "Nagrywanie",
+     "desc": "Zapis ciągły strumienia głównego na dysk (zamiast Shinobi), bez przekodowania. Pliki jak w "
+             "Shinobi: <nagrania>/<klucz grupy>/<ID monitora>/RRRR-MM-DDTGG-MM-SS.mp4. Nagrywanie każdej "
+             "kamery włączysz w zakładce Kamery.",
+     "fields": [
+        F("enabled", "Nagrywaj na dysk", "bool", False,
+          "Ścieżka: Ścieżki → Nagrania Shinobi. Usługa musi mieć prawo zapisu w tym katalogu."),
+        F("segment_minutes", "Długość pliku", "int", 15, "Pliki zaczynają się o pełnych minutach zegara.",
+          min=1, max=60, unit="min"),
+        F("retention_days", "Przechowuj przez", "float", 14.0, "Starsze nagrania są usuwane. 0 = bez limitu dni.",
+          min=0, max=3650, unit="dni"),
+        F("min_free_gb", "Minimalne wolne miejsce", "float", 50.0,
+          "Gdy na dysku zostanie mniej, usuwane są najstarsze nagrania wszystkich kamer.",
+          min=0, max=100000, unit="GB"),
+        F("audio", "Nagrywaj dźwięk", "bool", False, "Dźwięk z kamery zapisywany jako AAC (lekkie kodowanie na CPU)."),
+    ]},
+    {"id": "go2rtc", "title": "Strumienie (go2rtc)",
+     "desc": "go2rtc łączy się z każdą kamerą raz na strumień i udostępnia obraz lokalnie analizie, nagrywaniu "
+             "i innym programom. Bez niego każdy proces łączy się z kamerą osobno.",
+     "fields": [
+        F("enabled", "Używaj go2rtc", "bool", True, "Program jest w pakiecie (/opt/szukaj_cpu/go2rtc)."),
+        F("rtsp_listen", "Restream RTSP dostępny z", "select", "127.0.0.1",
+          "„tylko ten serwer” jest najbezpieczniejsze. „sieć lokalna” pozwala np. otworzyć "
+          "rtsp://serwer:8554/brama w VLC albo w innym programie (bez hasła!).",
+          options=[["127.0.0.1", "tylko ten serwer"], ["0.0.0.0", "sieć lokalna"]]),
+        F("rtsp_port", "Port RTSP", "int", 8554, "", min=1, max=65535),
+        F("api_port", "Port API (lokalny)", "int", 1984, "Dostępny tylko z tego serwera.", min=1, max=65535),
+        F("binary", "Program go2rtc", "text", "auto", "„auto” = ~/.szukaj_cpu/go2rtc, potem pakiet, potem PATH."),
+    ]},
     {"id": "clips", "title": "Klipy", "desc": "Krótkie nagrania zdarzeń wycinane ze strumienia głównego (bez kodowania).",
      "fields": [
         F("enabled", "Twórz klipy", "bool", True, "Wymagane także do pełnych klatek w galerii."),
@@ -203,9 +232,16 @@ def config_view(path):
             v = ""
         vals.setdefault(sec, {})[f["key"]] = v
     cams = []
+    rec_root = str((data.get("paths") or {}).get("recordings", "")).strip()
+    group = str((data.get("shinobi") or {}).get("group_key", "")).strip()
     for i, c in enumerate(data.get("camera", []) if isinstance(data.get("camera"), list) else [], 1):
         name = re.sub(r"[^\w-]", "_", str(c.get("name", f"camera{i}")).strip()) or f"camera{i}"
+        mon = str(c.get("shinobi_monitor", "")).strip()
+        rdir = str(c.get("record_dir", "")).strip() or (
+            "/".join(x for x in (rec_root.rstrip("/"), group, mon) if x) if (rec_root and group and mon)
+            else (f"{rec_root.rstrip('/')}/{name}" if rec_root else ""))
         cams.append({"orig": name, "name": str(c.get("name", name)), "enabled": c.get("enabled", True) is True,
+                     "record": c.get("record", True) is True, "record_dir": rdir,
                      "url": mask_secret_url(str(c.get("url", ""))),
                      "analysis_url": mask_secret_url(str(c.get("analysis_url", ""))),
                      "shinobi_monitor": str(c.get("shinobi_monitor", "")),
@@ -321,7 +357,7 @@ def plan_config(path, body):
             entry = {"orig": orig}
             for k in CAMERA_KEYS:
                 v = c.get(k)
-                if k == "enabled":
+                if k in ("enabled", "record"):
                     v = v is not False
                 else:
                     v = str(v or "").strip()
@@ -333,7 +369,7 @@ def plan_config(path, body):
                     v = _restore_pw(v, olds) if v else v
                 if k == "url" and not v:
                     raise ValueError(f"{name}: brak adresu strumienia głównego")
-                prev = oc.get(k, True if k == "enabled" else "") if orig else None
+                prev = oc.get(k, True if k in ("enabled", "record") else "") if orig else None
                 if orig is None or prev != v:
                     entry[k] = v
                     if orig is not None:

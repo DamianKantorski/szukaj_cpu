@@ -171,6 +171,39 @@ group_key = ""
 # Re-send the event every N seconds while the object stays visible
 # (keeps Watch-Only recording going); 0 = once per event
 repeat_seconds = 30
+# The group key also selects the recording directory (see [recording]).
+
+
+[recording]
+# Continuous recording of the main stream to disk (replaces Shinobi), stream copy –
+# no re-encoding. Files go where Shinobi kept them:
+#   <[paths] recordings>/<[shinobi] group_key>/<camera shinobi_monitor>/2026-11-19T17-30-00.mp4
+# (without group key / monitor ID: <recordings>/<camera name>/). Per camera: record, record_dir.
+# The service user must be able to write there (Shinobi dirs: sudo chown -R USER: DIR).
+enabled = false
+# Length of one file in minutes; files start on full clock minutes
+segment_minutes = 15
+# Delete recordings older than this many days (0 = no age limit)
+retention_days = 14
+# Keep at least this much free space; the oldest recordings of all cameras go first
+min_free_gb = 50
+# Record camera audio (encoded to AAC – small CPU cost)
+audio = false
+
+
+[go2rtc]
+# go2rtc (bundled) connects to each camera stream once and restreams it locally:
+# rtsp://127.0.0.1:8554/<camera> (main) and /<camera>_sub (analysis). Detection, clip
+# buffer and recording read from there – fewer connections to the cameras.
+enabled = true
+# "auto" = ~/.szukaj_cpu/go2rtc, then /opt/szukaj_cpu/go2rtc, then PATH
+binary = "auto"
+# "127.0.0.1" = this server only; "0.0.0.0" = LAN (e.g. VLC: rtsp://server:8554/brama –
+# no password!)
+rtsp_listen = "127.0.0.1"
+rtsp_port = 8554
+# local API (127.0.0.1 only)
+api_port = 1984
 
 
 # ─── Cameras: one [[camera]] block per stream ─────────────────────────
@@ -181,6 +214,9 @@ repeat_seconds = 30
 #                     stream can then keep a long GOP / Smart Codec (small recordings).
 #                     "" = analyse the main stream
 #   enabled         – false = temporarily disable the camera
+#   record          – false = do not record this camera to disk (default true when
+#                     [recording] enabled = true)
+#   record_dir      – own recording directory instead of the Shinobi-style one
 #   shinobi_monitor – Shinobi Monitor ID (monitor settings), "" = no timeline marking
 #   crop            – optional rectangle [x1, y1, x2, y2] (0–1) – only this part of
 #                     the frame is analysed (people appear larger to the model);

@@ -19,6 +19,8 @@ from .common import DEFAULT_CONF, APP_DIR, STOP, expand, list_segments, log
 from .config import load_config, tool_version
 from .detector import Detector, detect, draw
 from .events import close_event, load_static, process, save_static
+from .go2rtc import Go2rtc
+from .recorder import Recorder
 from .gallery import Gallery
 from .notify import shinobi_event
 from .web.server import start_http
@@ -157,10 +159,18 @@ def main():
     for cam in cams:                       # stare segmenty z poprzedniego uruchomienia są bezużyteczne
         for _, p in list_segments(cam.buf):
             p.unlink(missing_ok=True)
+    g2r = Go2rtc(cfg, cams) if cfg.g2r else None
+    if g2r is not None and not g2r.start():
+        g2r = None
+    recorder = Recorder(cfg, cams)
+    if not a.test:
+        recorder.check()
+    else:
+        for cam in cams:
+            cam.record = False
     threads = [threading.Thread(target=cam.loop, name=cam.name, daemon=True) for cam in cams]
-    if cfg.clips:
-        threads += [threading.Thread(target=cam.rec_loop, name=f"{cam.name}-rec", daemon=True)
-                    for cam in cams if cam.separate]
+    threads += [threading.Thread(target=cam.rec_loop, name=f"{cam.name}-rec", daemon=True)
+                for cam in cams if cam.rec_buffer or cam.record]
     for th in threads:
         th.start()
 
@@ -169,10 +179,14 @@ def main():
         STOP.set()
         for cam in cams:
             cam.stop()
+        if g2r is not None:
+            g2r.stop()
         hard_exit(0 if ok else 1)
 
     clipper = Clipper(cfg, cams, gallery, det)
     threading.Thread(target=clipper.loop, name="klipy", daemon=True).start()
+    if recorder.cams:
+        threading.Thread(target=recorder.loop, name="nagrania", daemon=True).start()
     start_http(cfg, cams, det)
     load_static(cfg, cams)
     gallery.cleanup()
@@ -218,6 +232,9 @@ def main():
         if cam.event is not None:
             close_event(cfg, cam, gallery, clipper)
     clipper.run_due(force=True)
+    recorder.shutdown()
+    if g2r is not None:
+        g2r.stop()
     save_static(cfg, cams)
     log.info("Zatrzymano.")
     hard_exit(0)
