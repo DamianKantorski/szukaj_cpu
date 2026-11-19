@@ -284,5 +284,6 @@ fi
 mkdir -p "$ROOT/dist"
 OUT="$ROOT/dist/szukaj-cpu_${VERSION}_${ARCH}.deb"
 dpkg-deb --root-owner-group -Zxz --build "$STAGE" "$OUT" >/dev/null
+(cd "$ROOT/dist" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256")
 echo "Zbudowano: dist/$(basename "$OUT") ($(du -h "$OUT" | cut -f1))"
 for c in "${CONTENTS[@]}"; do echo "  • $c"; done

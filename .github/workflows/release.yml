@@ -1,12 +1,16 @@
-# Po wypchnięciu tagu vX.Y.Z buduje pełny pakiet .deb (koła Pythona, modele FP32/INT8,
-# ffmpeg) tym samym skryptem co lokalnie i publikuje wydanie z plikiem pakietu.
-#   git tag v1.2.0 && git push origin v1.2.0
-# Pierwsze budowanie trwa ~30 min (ffmpeg, eksport modeli); potem build/ jest w pamięci podręcznej.
+# Zapasowa budowa pakietu na GitHubie (ręcznie: Actions → release → Run workflow).
+# Zwykle wydania robi się lokalnie:  ./build-local.sh && ./release.sh vX.Y.Z
+# Ten sam skrypt co lokalnie; pierwsze budowanie trwa ~30 min (ffmpeg, eksport modeli).
+# Z podanym tagiem publikuje wydanie, bez tagu – tylko plik do pobrania (artefakt).
 name: release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag wydania, np. v1.9.0 (puste = tylko artefakt do pobrania)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -18,14 +22,15 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Wersja z tagu musi zgadzać się z plikiem VERSION
+        if: inputs.tag != ''
         run: |
-          test "v$(tr -d ' \n' < VERSION)" = "$GITHUB_REF_NAME" \
-            || { echo "Tag $GITHUB_REF_NAME nie pasuje do VERSION ($(cat VERSION))"; exit 1; }
+          test "v$(tr -d ' \n' < VERSION)" = "${{ inputs.tag }}" \
+            || { echo "Tag ${{ inputs.tag }} nie pasuje do VERSION ($(cat VERSION))"; exit 1; }
 
       - name: Sprawdzenie składni
         run: |
           python3 -m compileall -q src tools
-          for f in uninstall.sh packaging/build-deb.sh ntfy/setup-ntfy.sh tools/build_ffmpeg.sh; do bash -n "$f"; done
+          for f in uninstall.sh packaging/build-deb.sh ntfy/setup-ntfy.sh tools/build_ffmpeg.sh build-local.sh release.sh; do bash -n "$f"; done
           for f in packaging/debian/postinst packaging/debian/prerm packaging/debian/postrm bin/szukaj-cpu bin/szukaj-cpu-export-tools; do sh -n "$f"; done
 
       - name: Pamięć podręczna (ffmpeg, modele, koła, narzędzia eksportu)
@@ -43,10 +48,22 @@ jobs:
       - name: Budowa pakietu (kontener Debiana 13)
         run: bash packaging/build-deb.sh
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: szukaj-cpu-deb
+          path: dist/*
+          if-no-files-found: error
+
       - name: Wydanie
+        if: inputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
         run: |
-          NOTES="release-notes/${GITHUB_REF_NAME}.md"
+          NOTES="release-notes/${TAG}.md"
           if [ -f "$NOTES" ]; then ARGS=(--notes-file "$NOTES"); else ARGS=(--generate-notes); fi
-          gh release create "$GITHUB_REF_NAME" dist/*.deb --title "szukaj_cpu ${GITHUB_REF_NAME#v}" "${ARGS[@]}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.deb dist/*.sha256 --clobber
+          else
+            gh release create "$TAG" dist/*.deb dist/*.sha256 --target "$GITHUB_SHA" --title "szukaj_cpu ${TAG#v}" "${ARGS[@]}"
+          fi

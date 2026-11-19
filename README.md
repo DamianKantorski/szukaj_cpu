@@ -85,7 +85,7 @@ Everything is built in a Debian 13 container, so the build machine only needs Do
 Podman (e.g. CachyOS: `sudo pacman -S podman`; WSL/Ubuntu: `sudo apt install podman`):
 
 ```bash
-bash packaging/build-deb.sh                     # → dist/szukaj-cpu_1.9.0_amd64.deb
+./build-local.sh                                # → dist/szukaj-cpu_1.9.0_amd64.deb
 bash packaging/build-deb.sh --calib ~/frames    # INT8 calibrated on frames from your cameras
 MODEL_SIZES="960x544 640x384" bash packaging/build-deb.sh
 bash packaging/build-deb.sh --slim              # program only; install downloads dependencies
@@ -93,8 +93,20 @@ bash packaging/build-deb.sh --slim              # program only; install download
 
 Intermediate results are cached in `build/` – the first build takes a while (ffmpeg, PyTorch
 for the export, quantization), later builds take a minute. `--rebuild-ffmpeg`,
-`--rebuild-models`, `--rebuild-wheels` and `--rebuild-all` refresh parts of it. Pushing a
-`vX.Y.Z` tag builds the same full package on GitHub Actions and attaches it to the release.
+`--rebuild-models`, `--rebuild-wheels` and `--rebuild-all` refresh parts of it.
+
+### Releasing (local build, like VideoPipeline)
+
+```bash
+./build-local.sh                 # dist/szukaj-cpu_<version>_amd64.deb + .sha256
+./release.sh v1.9.0              # GitHub release from dist/ (needs: gh auth login)
+./release.sh v1.9.0 --dry-run    # only show what would happen
+```
+
+`release.sh` checks that the tag matches `VERSION`, that the current commit is already on
+GitHub, and creates the tag exactly on that commit (no more tags on an old `main`). The
+description comes from `release-notes/<tag>.md`; re-running replaces the files. The GitHub
+Actions workflow is only a manual backup (Actions → release → Run workflow).
 
 ### Installing
 
