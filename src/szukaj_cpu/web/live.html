@@ -42,6 +42,9 @@ button.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
 @media(hover:none){.ctl{opacity:1}}
 .ctl button,.ctl a{background:rgba(20,22,26,.8);border:1px solid rgba(255,255,255,.15);border-radius:7px;padding:4px 9px;font-size:13px;color:var(--fg);text-decoration:none;line-height:1.4}
 .ctl button.on{border-color:var(--acc)}
+.stats{position:absolute;left:8px;bottom:8px;right:8px;margin-right:260px;background:rgba(0,0,0,.65);padding:3px 8px;border-radius:6px;font:12px/1.4 ui-monospace,monospace;color:#cfd3d8;z-index:2;pointer-events:none}
+.stats[hidden]{display:none}
+@media(max-width:600px){.stats{bottom:46px;margin-right:0}}
 .msg{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;color:var(--mut)}
 </style></head><body>
 <header class="top"><div class="topin">
@@ -51,6 +54,7 @@ button.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
 </div></header><main>
 <div class="bar">
   <span class="grp" id="lay"><button data-l="grid" class="on">Wszystkie</button></span>
+  <label class="hint"><input type="checkbox" id="aud" checked> dźwięk</label>
   <span class="sp"></span>
   <span class="hint" id="hint">Kliknij obraz, aby powiększyć. Dźwięk: 🔇/🔊.</span>
 </div>
@@ -92,6 +96,80 @@ class LiveView extends VideoRTC {
     this.video.muted = true;
     this.video.addEventListener("playing", () => this.status(""));
     this.video.addEventListener("waiting", () => this.status("buforowanie…"));
+    // obraz stoi, choć połączenie jest otwarte (np. skok znaczników czasu w strumieniu) – połącz od nowa
+    let last = -1, still = 0;
+    const wd = setInterval(() => {
+      if (!this.isConnected) { clearInterval(wd); return; }
+      const v = this.video;
+      if (this.wsState !== WebSocket.OPEN || document.hidden) { still = 0; last = -1; return; }
+      if (v.currentTime === last) {
+        if (++still >= (last === 0 ? 10 : 4)) {
+          still = 0; last = -1;
+          this.status("obraz stanął – łączę ponownie…");
+          clearTimeout(this.reconnectTID); this.reconnectTID = 0;
+          this.ondisconnect();
+          this.onconnect();
+        }
+      } else { still = 0; last = v.currentTime; }
+    }, 1000);
+  }
+  // Własna obsługa MSE: oryginał z go2rtc ustawia playbackRate = bufor (s) przy każdym fragmencie,
+  // co przy 10 kl./s (Dahua) i w Safari na iOS daje skokowe odtwarzanie. Tu: stała prędkość 1×,
+  // delikatna korekta (0.95–1.1×) i przeskok dopiero przy dużym opóźnieniu.
+  onmse() {
+    const MMS = "ManagedMediaSource" in window;
+    const MS = MMS ? window.ManagedMediaSource : window.MediaSource;
+    const ms = new MS();
+    const v = this.video;
+    ms.addEventListener("sourceopen", () => {
+      if (!MMS) URL.revokeObjectURL(v.src);
+      this.send({type: "mse", value: this.codecs(MS.isTypeSupported)});
+    }, {once: true});
+    if (MMS) { v.disableRemotePlayback = true; v.srcObject = ms; }
+    else { v.src = URL.createObjectURL(ms); v.srcObject = null; }
+    this.play();
+    this.mseCodecs = "";
+    const target = MMS ? 1.5 : 1.0;          // docelowe opóźnienie względem najnowszej klatki (s)
+    this.onmessage["mse"] = msg => {
+      if (msg.type !== "mse") return;
+      this.mseCodecs = msg.value;
+      const sb = ms.addSourceBuffer(msg.value);
+      sb.mode = "segments";
+      const buf = new Uint8Array(4 * 1024 * 1024);
+      let bufLen = 0;
+      sb.addEventListener("updateend", () => {
+        if (!sb.updating && bufLen > 0) {
+          try { sb.appendBuffer(buf.slice(0, bufLen)); bufLen = 0; } catch (e) {}
+        }
+        if (sb.updating || !sb.buffered || !sb.buffered.length) return;
+        const end = sb.buffered.end(sb.buffered.length - 1);
+        const start0 = sb.buffered.start(0);
+        if (end - start0 > 20) {
+          try { sb.remove(start0, end - 10); } catch (e) {}
+          return;
+        }
+        try { if (ms.setLiveSeekableRange) ms.setLiveSeekableRange(start0, end); } catch (e) {}
+        const gap = end - v.currentTime;
+        this.gap = gap;
+        if (gap > target + 4 || v.currentTime < start0) {
+          v.currentTime = Math.max(start0, end - target);
+          if (v.playbackRate !== 1) v.playbackRate = 1;
+        } else {
+          const want = gap > target + 0.7 ? 1.1 : gap < target - 0.6 ? 0.95 : 1;
+          if (v.playbackRate !== want) v.playbackRate = want;
+        }
+      });
+      this.ondata = data => {
+        if (sb.updating || bufLen > 0) {
+          const b = new Uint8Array(data);
+          if (bufLen + b.byteLength > buf.length) { bufLen = 0; return; }   // przepełnienie – pomiń
+          buf.set(b, bufLen);
+          bufLen += b.byteLength;
+        } else {
+          try { sb.appendBuffer(data); } catch (e) {}
+        }
+      };
+    };
   }
   onconnect() {
     const r = super.onconnect();
@@ -145,7 +223,7 @@ function setQ(name, q) {
   t.q = q;
   const v = document.createElement("live-view");
   v.mode = "mse";
-  v.media = "video,audio";
+  v.media = $("aud").checked ? "video,audio" : "video";
   v.addEventListener("status", ev => {
     const st = t.el.querySelector(".st");
     st.textContent = ev.detail.text;
@@ -171,12 +249,14 @@ function build() {
     const hdTitle = !supported(c.hd_codec) ? `przeglądarka nie odtwarza ${c.hd_codec}` : "pełna rozdzielczość";
     el.innerHTML = `
       <div class="st">łączenie…</div>
+      <div class="stats" hidden></div>
       <div class="lab">${c.recording ? '<i class="rec" title="nagrywanie włączone"></i>' : ""}<b>${esc(c.name)}</b><span class="q"></span></div>
       <div class="ctl">
         <button data-q="sd" ${canSD(c) ? "" : "disabled"} title="${esc(sdTitle)}">SD</button>
         <button data-q="hd" ${canHD(c) ? "" : "disabled"} title="${esc(hdTitle)}">HD</button>
         <button data-mute title="Dźwięk">🔇</button>
         <button data-fs title="Pełny ekran">⛶</button>
+        <button data-info title="Informacje o strumieniu">ℹ</button>
         <a data-rec title="Nagrania z ostatniej minuty" href="#">⏪</a>
       </div>`;
     g.appendChild(el);
@@ -201,6 +281,11 @@ function onTileClick(ev, c) {
       if (!v.muted) v.play().catch(() => {});
       b.textContent = v.muted ? "🔇" : "🔊";
     } else if (b.hasAttribute("data-fs")) fullscreen(t);
+    else if (b.hasAttribute("data-info")) {
+      const st = t.el.querySelector(".stats");
+      st.hidden = !st.hidden;
+      b.classList.toggle("on", !st.hidden);
+    }
     else if (b.hasAttribute("data-rec")) {
       ev.preventDefault();
       const d = new Date(Date.now() - 60000);
@@ -237,6 +322,24 @@ function setFocus(name) {
   document.querySelectorAll("#lay button").forEach(b => b.classList.toggle("on", b.dataset.l === (name || "grid")));
   history.replaceState(null, "", name ? "#cam=" + encodeURIComponent(name) : "#");
 }
+
+function stats() {
+  for (const c of (info ? info.cams : [])) {
+    const t = tiles[c.name];
+    const el = t && t.el.querySelector(".stats");
+    if (!el || el.hidden || !t.view) continue;
+    const v = t.view.video;
+    const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+    el.textContent = `${v.videoWidth}×${v.videoHeight} · ${t.view.mseCodecs || "–"} · opóźnienie ${t.view.gap != null ? t.view.gap.toFixed(1) + " s" : "–"}`
+      + ` · prędkość ${v.playbackRate.toFixed(2)}×` + (q ? ` · klatki ${q.totalVideoFrames} (pominięte ${q.droppedVideoFrames})` : "");
+  }
+}
+setInterval(stats, 1000);
+$("aud").addEventListener("change", () => {
+  try { localStorage.setItem("szukaj_live_audio", $("aud").checked ? "1" : "0"); } catch (e) {}
+  for (const c of info.cams) { const t = tiles[c.name]; if (t && t.view) { const q = t.q; t.q = null; setQ(c.name, q); } }
+});
+try { if (localStorage.getItem("szukaj_live_audio") === "0") $("aud").checked = false; } catch (e) {}
 
 $("lay").addEventListener("click", ev => {
   const b = ev.target.closest("button");
