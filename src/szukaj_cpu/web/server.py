@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import threading
+import time
 import tomllib
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler
@@ -35,9 +36,48 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None):
     admin_on = bool(cfg.http_user and cfg.http_password)
     under_systemd = bool(os.environ.get("INVOCATION_ID"))
 
+    fails = {}                       # adres klienta -> [czasy nieudanych logowań]
+    fails_lock = threading.Lock()
+    window = cfg.login_lockout * 60
+
     class Handler(SimpleHTTPRequestHandler):
         server_version = "szukaj_cpu"
         sys_version = ""
+
+        def _client(self):
+            """Adres klienta; za lokalnym proxy (Tailscale Serve, nginx) – z X-Forwarded-For."""
+            ip = self.client_address[0]
+            if ip in ("127.0.0.1", "::1"):
+                if self.headers.get("X-Forwarded-For"):
+                    return self.headers["X-Forwarded-For"].split(",")[0].strip()
+                if self.headers.get("Tailscale-User-Login"):
+                    return "ts:" + self.headers["Tailscale-User-Login"]
+            return ip
+
+        def _locked(self, ip):
+            """Ile sekund blokady zostało (0 = brak)."""
+            if not cfg.login_max_fail:
+                return 0
+            now = time.monotonic()
+            with fails_lock:
+                t = [x for x in fails.get(ip, []) if now - x < window]
+                if t:
+                    fails[ip] = t
+                else:
+                    fails.pop(ip, None)
+                return int(window - (now - t[-cfg.login_max_fail])) + 1 if len(t) >= cfg.login_max_fail else 0
+
+        def _failed(self, ip):
+            if not cfg.login_max_fail:
+                return
+            with fails_lock:
+                fails.setdefault(ip, []).append(time.monotonic())
+                n = len(fails[ip])
+                if len(fails) > 1000:                    # ochrona pamięci
+                    fails.pop(next(iter(fails)))
+            if n == cfg.login_max_fail:
+                log.warning("Panel WWW: %d nieudanych logowań z %s – logowanie zablokowane na %g min",
+                            n, ip, cfg.login_lockout)
 
         def log_message(self, *a):
             pass
@@ -70,7 +110,17 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None):
 
         def _gate(self):
             """True = obsłużone (odmowa)."""
+            if not admin_on:
+                return False
+            ip = self._client()
+            left = self._locked(ip)
+            if left:
+                self._send(429, f"Za dużo nieudanych prób logowania. Spróbuj ponownie za {max(1, round(left / 60))} min.",
+                           "text/plain; charset=utf-8", {"Retry-After": str(left)})
+                return True
             if not self._authorized():
+                if self.headers.get("Authorization"):
+                    self._failed(ip)
                 self._send(401, "Wymagane logowanie", "text/plain; charset=utf-8",
                            {"WWW-Authenticate": 'Basic realm="szukaj_cpu", charset="UTF-8"'})
                 return True
@@ -286,9 +336,23 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None):
                 return
             return self._send(404, {"error": "nie ma takiej operacji"})
 
-    srv = ThreadingHTTPServer(("0.0.0.0", cfg.port),
-                              functools.partial(Handler, directory=str(cfg.galeria)))
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    log.info("Galeria WWW: http://<adres-serwera>:%d/%s", cfg.port,
+    import socket
+
+    class Server6(ThreadingHTTPServer):
+        address_family = socket.AF_INET6
+
+    handler = functools.partial(Handler, directory=str(cfg.galeria))
+    bound = []
+    for addr in cfg.http_listen:
+        try:
+            srv = (Server6 if ":" in addr else ThreadingHTTPServer)((addr, cfg.port), handler)
+        except OSError as e:
+            log.error("Galeria WWW: nie można nasłuchiwać na %s:%d (%s)", addr, cfg.port, e)
+            continue
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        bound.append(addr)
+    if not bound:
+        return
+    log.info("Galeria WWW: http://%s:%d/%s", bound[0] if bound != ["0.0.0.0"] else "<adres-serwera>", cfg.port,
              "  (panel: /admin/live, /admin/nagrania, /admin/, /admin/config – logowanie)" if admin_on
              else "  (panel /admin/ wyłączony – ustaw http_user i http_password)")

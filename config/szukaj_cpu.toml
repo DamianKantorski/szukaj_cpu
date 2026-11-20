@@ -126,10 +126,20 @@ http_port = 0
 # this login and the settings panel is enabled: /admin/ (detection zone and crop
 # drawn on the camera image) and /admin/config (all other settings, cameras with
 # an RTSP address wizard and stream test, service restart).
-# Basic auth – over the network use HTTPS, e.g. Tailscale:
-#   sudo tailscale serve --bg --https=8443 http://localhost:8091
+# Basic auth – outside the home network use Tailscale (encrypted), ideally with
+# HTTPS from Tailscale Serve (tailnet only – never "tailscale funnel", which is public):
+#   sudo tailscale serve --bg http://127.0.0.1:8091   -> https://<host>.<tailnet>.ts.net
 http_user = ""
 http_password = ""
+# Addresses the web server listens on (comma-separated). "0.0.0.0" = all interfaces
+# (LAN + Tailscale). "127.0.0.1" = this machine only – use it behind Tailscale Serve,
+# so the password never travels unencrypted in the LAN.
+http_listen = "0.0.0.0"
+# After this many wrong passwords from one address, login from it is blocked for
+# login_lockout_minutes (0 = no limit). Behind Tailscale Serve the real client address
+# is taken from X-Forwarded-For.
+login_max_failures = 5
+login_lockout_minutes = 15
 
 # Full-resolution frame from the MAIN stream for every event (taken from the clip
 # buffer at the moment of the best detection, re-analysed for accurate boxes).

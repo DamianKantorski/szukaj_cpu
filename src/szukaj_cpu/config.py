@@ -1,5 +1,6 @@
 """Odczyt i kontrola pliku konfiguracji szukaj_cpu.toml."""
 
+import ipaddress
 import os
 import re
 import shutil
@@ -109,7 +110,8 @@ SCHEMA = {
     "detection": {"classes", "confidence", "imgsz", "aspect_ratio", "precision", "engine", "threads", "min_hits", "event_gap",
                   "static_classes", "static_after", "static_forget", "max_height", "watchdog", "frame_selection", "analysis_interval"},
     "clips": {"enabled", "pre_seconds", "post_seconds", "max_length", "segment_length"},
-    "gallery": {"retention_days", "refresh_seconds", "http_port", "http_user", "http_password",
+    "gallery": {"retention_days", "refresh_seconds", "http_port", "http_listen", "http_user", "http_password",
+                "login_max_failures", "login_lockout_minutes",
                 "full_frame", "full_format",
                 "full_quality", "thumb_width"},
     "notifications": {"ntfy_url", "min_interval", "ntfy_token", "priority", "click_url"},
@@ -212,6 +214,15 @@ def load_config(path):
     c.retencja = get("gallery", "retention_days", 5.0, float)
     c.odswiezanie = get("gallery", "refresh_seconds", 60, int)
     c.port = get("gallery", "http_port", 0, int)
+    listen = get("gallery", "http_listen", "0.0.0.0", str)
+    c.http_listen = [a.strip().strip("[]") for a in listen.split(",") if a.strip()] or ["0.0.0.0"]
+    for a in c.http_listen:
+        try:
+            ipaddress.ip_address(a)
+        except ValueError:
+            sys.exit(f"{path}: [gallery] http_listen: \"{a}\" nie jest adresem IP (np. 0.0.0.0, 127.0.0.1, 100.x.y.z)")
+    c.login_max_fail = max(0, get("gallery", "login_max_failures", 5, int))
+    c.login_lockout = max(1.0, get("gallery", "login_lockout_minutes", 15, float))
     c.http_user = get("gallery", "http_user", "", str).strip()
     c.http_password = get("gallery", "http_password", "", str)
     c.full = get("gallery", "full_frame", True, bool)

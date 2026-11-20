@@ -199,6 +199,29 @@ HomeKit follows.
 * Audio is recorded as AAC (`[recording] audio = true`). The bundled ffmpeg decodes AAC,
   G.711 (PCMU/PCMA), L16 (Dahua), G.726, G.722, Opus and MP3 from the camera.
 
+### Remote access (Tailscale) and login protection
+
+Never forward the port on the router and never use `tailscale funnel` (public). Inside the
+tailnet traffic is encrypted by WireGuard; Tailscale Serve adds HTTPS with a real certificate
+and lets the panel hide from the LAN:
+
+```toml
+[gallery]
+http_listen = "127.0.0.1"      # only Tailscale Serve (and the server itself) can connect
+login_max_failures = 5         # wrong passwords from one address before a lockout
+login_lockout_minutes = 15
+```
+
+```bash
+# once: Tailscale admin console -> DNS -> enable MagicDNS and HTTPS certificates
+sudo tailscale serve --bg http://127.0.0.1:8091      # -> https://<host>.<tailnet>.ts.net
+tailscale serve status
+```
+
+Behind Serve the client address comes from `X-Forwarded-For` (trusted only from 127.0.0.1),
+so a lockout hits only the device that guessed wrong. Limit who can reach the server with a
+tailnet policy grant, e.g. only your own devices to `tag:server` / the server on port 443.
+
 ### Live view (`/admin/live`)
 
 Requires the panel login and go2rtc. All cameras in a grid; click a picture to show one
