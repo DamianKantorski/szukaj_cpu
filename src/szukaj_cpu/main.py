@@ -187,7 +187,7 @@ def main():
     threading.Thread(target=clipper.loop, name="klipy", daemon=True).start()
     if recorder.cams:
         threading.Thread(target=recorder.loop, name="nagrania", daemon=True).start()
-    start_http(cfg, cams, det, gallery)
+    start_http(cfg, cams, det, gallery, g2r)
     load_static(cfg, cams)
     gallery.cleanup()
     last_cleanup = last_stats = time.time()

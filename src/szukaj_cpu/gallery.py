@@ -106,7 +106,7 @@ img{{width:100%;display:block}} figcaption{{padding:8px;font-size:14px;line-heig
 small{{color:#888}} a{{color:inherit}}
 </style>
 <h1>Wykrycia na kamerach ({len(rows)})</h1>
-{'<p><a href="/admin/nagrania">▶ Nagrania</a> · <a href="/admin/">⚙ Obszar detekcji</a> · <a href="/admin/config">⚙ Konfiguracja</a></p>' if self.cfg.port and self.cfg.http_user and self.cfg.http_password else ''}
+{'<p><a href="/admin/live">● Na żywo</a> · <a href="/admin/nagrania">▶ Nagrania</a> · <a href="/admin/">⚙ Obszar detekcji</a> · <a href="/admin/config">⚙ Konfiguracja</a></p>' if self.cfg.port and self.cfg.http_user and self.cfg.http_password else ''}
 <p><small>Aktualizacja: {now}. Kliknij miniaturę, aby otworzyć klip (▶). Przechowywane {self.cfg.retencja:g} dni.</small></p>
 {''.join(parts)}</html>"""
         tmp = self.dir / ".index.tmp"

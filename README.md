@@ -64,7 +64,7 @@ src/szukaj_cpu/
   notify.py    ntfy and Shinobi
   main.py      arguments, main loop, --test, --init
   web/         web server, detection-area page (area.html), recordings (nagrania.html,
-               recordings.py), configurator (config.html),
+               recordings.py), live view (live.html, live.py), configurator (config.html),
                TOML editing, model upload
 tools/         build_ffmpeg.sh, export_models.py, compare_models.py, test_przerwy.py
 packaging/     build-deb.sh, debian/ maintainer scripts
@@ -179,7 +179,7 @@ departure and movement still raise events. The list survives restarts
 
 Since 1.9 szukaj_cpu can record continuously and needs only one connection per camera
 stream. It is the first step to replacing Shinobi (and Home Assistant for HomeKit); a
-live view in the browser and HomeKit follow.
+HomeKit follows.
 
 * **go2rtc** (bundled, `[go2rtc]`) connects to each camera stream once and restreams it
   locally – `rtsp://127.0.0.1:8554/<camera>` and `/<camera>_sub`. Detection, the clip buffer
@@ -198,6 +198,21 @@ live view in the browser and HomeKit follow.
   `sudo chown -R $USER: /path/to/videos/GROUP_KEY` – the log says so when it cannot.
 * Audio is recorded as AAC (`[recording] audio = true`). The bundled ffmpeg decodes AAC,
   G.711 (PCMU/PCMA), L16 (Dahua), G.726, G.722, Opus and MP3 from the camera.
+
+### Live view (`/admin/live`)
+
+Requires the panel login and go2rtc. All cameras in a grid; click a picture to show one
+camera large (HD), click again to go back. Per camera: SD/HD (substream / main stream),
+sound on/off, full screen, ⏪ jumps to the recordings page one minute back. Streams play
+through MSE (Chrome, Firefox, Edge, Safari on macOS and iOS 17.1+), latency about 1 s; the
+picture is not transcoded – the browser gets the camera's H.264/H.265 as is, so the server
+does no extra work and go2rtc reuses its single camera connection. A browser that cannot
+play a stream's codec (H.265 substream in Firefox or Chrome on Linux) gets that button
+disabled. A stream stops when the tab is hidden.
+
+go2rtc itself stays on 127.0.0.1 (its API can add sources and run commands). szukaj_cpu
+passes through only the WebSocket `/api/ws?src=<camera stream>` and the player script,
+authorised by a token the logged-in page receives.
 
 ### Recordings page (`/admin/nagrania`)
 

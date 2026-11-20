@@ -1,0 +1,272 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Na żywo – szukaj_cpu</title>
+<style>
+:root{--bg:#111;--card:#1b1d22;--fg:#e6e6e6;--mut:#9aa0a6;--line:#2c2f36;--acc:#4ea1ff;--ok:#4cc38a;--err:#ff6b6b;--rec:#ff4d4d}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:1600px;margin:0 auto;padding:12px 16px 30px}
+a{color:var(--acc)}
+header.top{border-bottom:1px solid var(--line)}
+.topin{max-width:1600px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:16px;margin-right:6px}
+nav.tabs{display:flex;gap:4px;flex-wrap:wrap}
+nav.tabs a{padding:6px 12px;border-radius:8px;text-decoration:none;color:var(--mut);border:1px solid transparent}
+nav.tabs a.on{color:var(--fg);background:var(--card);border-color:var(--line)}
+nav.tabs a:hover{color:var(--fg)}.gal{margin-left:auto;font-size:14px}
+@media(max-width:820px){.gal{margin-left:0}}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 10px}
+.bar .sp{flex:1}
+button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 11px;cursor:pointer}
+button:hover{border-color:#4a4f58}button:disabled{opacity:.4;cursor:default}
+button.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+.grp{display:inline-flex}.grp button{border-radius:0;margin-left:-1px}.grp button:first-child{border-radius:8px 0 0 8px;margin-left:0}
+.grp button:last-child{border-radius:0 8px 8px 0}
+.hint{color:var(--mut);font-size:13px}
+.grid{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,520px),1fr))}
+.grid.one{grid-template-columns:1fr}
+.grid.one .tile:not(.focus){display:none}
+.tile{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:16/9}
+.grid.one .tile.focus{width:min(100%,calc((100vh - 150px) * 16 / 9));margin:0 auto}
+.tile live-view{display:block;width:100%;height:100%}
+.tile video{object-fit:contain;background:#000}
+.tile:fullscreen{border-radius:0;aspect-ratio:auto}
+.tile:-webkit-full-screen{border-radius:0}
+.lab{position:absolute;left:8px;top:8px;display:flex;gap:6px;align-items:center;pointer-events:none;z-index:2}
+.lab b{background:rgba(0,0,0,.6);padding:2px 9px;border-radius:6px;font-size:14px}
+.lab .q{background:rgba(0,0,0,.6);padding:2px 7px;border-radius:6px;font-size:12px;color:var(--mut)}
+.lab .rec{width:9px;height:9px;border-radius:50%;background:var(--rec);box-shadow:0 0 0 2px rgba(0,0,0,.5)}
+.st{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--mut);font-size:14px;pointer-events:none;text-align:center;padding:20px;z-index:1}
+.st.err{color:var(--err)}
+.ctl{position:absolute;right:8px;bottom:8px;display:flex;gap:6px;z-index:2;opacity:0;transition:opacity .15s}
+.tile:hover .ctl,.tile.show .ctl,.tile.focus .ctl{opacity:1}
+@media(hover:none){.ctl{opacity:1}}
+.ctl button,.ctl a{background:rgba(20,22,26,.8);border:1px solid rgba(255,255,255,.15);border-radius:7px;padding:4px 9px;font-size:13px;color:var(--fg);text-decoration:none;line-height:1.4}
+.ctl button.on{border-color:var(--acc)}
+.msg{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;color:var(--mut)}
+</style></head><body>
+<header class="top"><div class="topin">
+ <span class="brand">szukaj_cpu</span>
+ <nav class="tabs"><a href="/admin/live" class="on">Na żywo</a><a href="/admin/nagrania">Nagrania</a><a href="/admin/">Obszar detekcji</a><a href="/admin/config">Konfiguracja</a></nav>
+ <a class="gal" href="/">← galeria</a>
+</div></header><main>
+<div class="bar">
+  <span class="grp" id="lay"><button data-l="grid" class="on">Wszystkie</button></span>
+  <span class="sp"></span>
+  <span class="hint" id="hint">Kliknij obraz, aby powiększyć. Dźwięk: 🔇/🔊.</span>
+</div>
+<div class="grid" id="grid"></div>
+</main>
+<script type="module">
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const pad = n => String(n).padStart(2, "0");
+
+let info = null, focus = null;
+const tiles = {};          // nazwa kamery -> {el, view, q}
+
+async function getInfo() {
+  const r = await fetch("/api/live/info", {headers: {"X-Szukaj": "1"}});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+  return r.json();
+}
+
+function supported(codec) {
+  const MS = window.ManagedMediaSource || window.MediaSource;
+  if (!MS) return false;
+  const c = {H264: 'avc1.640029', H265: 'hvc1.1.6.L153.B0'}[codec];
+  return c ? MS.isTypeSupported(`video/mp4; codecs="${c}"`) : true;   // nieznany – spróbuj
+}
+
+let VideoRTC;
+try {
+  ({VideoRTC} = await import("/admin/live/video-rtc.js"));
+} catch (e) {
+  $("grid").innerHTML = `<div class="msg">Nie udało się wczytać odtwarzacza z go2rtc (${esc(e.message)}). Sprawdź, czy go2rtc jest włączony w konfiguracji.</div>`;
+  throw e;
+}
+
+class LiveView extends VideoRTC {
+  oninit() {
+    super.oninit();
+    this.video.controls = false;
+    this.video.muted = true;
+    this.video.addEventListener("playing", () => this.status(""));
+    this.video.addEventListener("waiting", () => this.status("buforowanie…"));
+  }
+  onconnect() {
+    const r = super.onconnect();
+    if (r) this.status("łączenie…");
+    return r;
+  }
+  onopen() {
+    const modes = super.onopen();
+    this.onmessage.status = msg => {
+      if (msg.type === "error") this.status("błąd: " + msg.value, true);
+    };
+    if (!modes.length) this.status("Ta przeglądarka nie obsługuje odtwarzania strumienia (brak MSE).", true);
+    return modes;
+  }
+  onclose() {
+    const r = super.onclose();
+    if (r) this.status("połączenie przerwane – ponawiam…");
+    return r;
+  }
+  status(text, err) {
+    this.dispatchEvent(new CustomEvent("status", {detail: {text, err}}));
+  }
+}
+customElements.define("live-view", LiveView);
+
+function wsUrl(stream) {
+  return `/api/live/ws?src=${encodeURIComponent(stream)}&token=${encodeURIComponent(info.token)}`;
+}
+
+function canSD(c) { return c.sd && supported(c.sd_codec); }
+function canHD(c) { return supported(c.hd_codec); }
+
+function defaultQ(c) {
+  if (focus === c.name) return canHD(c) ? "hd" : "sd";
+  return canSD(c) && (info.cams.length > 1 || matchMedia("(max-width:700px)").matches) ? "sd" : (canHD(c) ? "hd" : "sd");
+}
+
+function destroy(view) {
+  if (!view) return;
+  clearTimeout(view.reconnectTID); view.reconnectTID = 0;
+  try { view.video.onerror = null; view.ondisconnect(); view.video.removeAttribute("src"); } catch (e) {}
+  view.remove();
+}
+
+function setQ(name, q) {
+  const t = tiles[name], c = info.cams.find(x => x.name === name);
+  if (!t || !c) return;
+  if (t.q === q && t.view) return;
+  const muted = t.view ? t.view.video.muted : true;
+  destroy(t.view);
+  t.q = q;
+  const v = document.createElement("live-view");
+  v.mode = "mse";
+  v.media = "video,audio";
+  v.addEventListener("status", ev => {
+    const st = t.el.querySelector(".st");
+    st.textContent = ev.detail.text;
+    st.classList.toggle("err", !!ev.detail.err);
+  });
+  t.el.prepend(v);
+  v.video.muted = muted;
+  v.src = wsUrl(q === "sd" ? c.sd : c.hd);
+  t.view = v;
+  t.el.querySelector(".q").textContent = q === "sd" ? "SD" : "HD";
+  t.el.querySelectorAll("[data-q]").forEach(b => b.classList.toggle("on", b.dataset.q === q));
+  t.el.querySelector("[data-mute]").textContent = muted ? "🔇" : "🔊";
+}
+
+function build() {
+  const g = $("grid");
+  g.innerHTML = "";
+  for (const c of info.cams) {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.dataset.cam = c.name;
+    const sdTitle = !c.sd ? "kamera nie ma substreamu" : !supported(c.sd_codec) ? `przeglądarka nie odtwarza ${c.sd_codec} (substream)` : "niższa jakość, mniej danych";
+    const hdTitle = !supported(c.hd_codec) ? `przeglądarka nie odtwarza ${c.hd_codec}` : "pełna rozdzielczość";
+    el.innerHTML = `
+      <div class="st">łączenie…</div>
+      <div class="lab">${c.recording ? '<i class="rec" title="nagrywanie włączone"></i>' : ""}<b>${esc(c.name)}</b><span class="q"></span></div>
+      <div class="ctl">
+        <button data-q="sd" ${canSD(c) ? "" : "disabled"} title="${esc(sdTitle)}">SD</button>
+        <button data-q="hd" ${canHD(c) ? "" : "disabled"} title="${esc(hdTitle)}">HD</button>
+        <button data-mute title="Dźwięk">🔇</button>
+        <button data-fs title="Pełny ekran">⛶</button>
+        <a data-rec title="Nagrania z ostatniej minuty" href="#">⏪</a>
+      </div>`;
+    g.appendChild(el);
+    tiles[c.name] = {el, view: null, q: null};
+    el.addEventListener("click", ev => onTileClick(ev, c));
+  }
+  for (const c of info.cams) setQ(c.name, defaultQ(c));
+  const lay = $("lay");
+  lay.innerHTML = `<button data-l="grid" class="${focus ? "" : "on"}">Wszystkie</button>` +
+    info.cams.map(c => `<button data-l="${esc(c.name)}" class="${focus === c.name ? "on" : ""}">${esc(c.name)}</button>`).join("");
+}
+
+function onTileClick(ev, c) {
+  const t = tiles[c.name];
+  const b = ev.target.closest("button,a");
+  if (b) {
+    ev.stopPropagation();
+    if (b.dataset.q) setQ(c.name, b.dataset.q);
+    else if (b.hasAttribute("data-mute")) {
+      const v = t.view.video;
+      v.muted = !v.muted;
+      if (!v.muted) v.play().catch(() => {});
+      b.textContent = v.muted ? "🔇" : "🔊";
+    } else if (b.hasAttribute("data-fs")) fullscreen(t);
+    else if (b.hasAttribute("data-rec")) {
+      ev.preventDefault();
+      const d = new Date(Date.now() - 60000);
+      const day = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      location.href = `/admin/nagrania#date=${day}&cam=${encodeURIComponent(c.name)}&t=${d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds()}`;
+    }
+    return;
+  }
+  // dotyk: pierwsze stuknięcie pokazuje przyciski; klik w obraz = powiększ / wróć do siatki
+  setFocus(focus === c.name ? null : c.name);
+}
+
+function fullscreen(t) {
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    return;
+  }
+  const el = t.el;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => t.view.video.webkitEnterFullscreen?.());
+  else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  else t.view.video.webkitEnterFullscreen?.();        // iPhone: tylko element video
+}
+
+function setFocus(name) {
+  focus = name;
+  const g = $("grid");
+  g.classList.toggle("one", !!name);
+  for (const c of info.cams) {
+    const t = tiles[c.name];
+    t.el.classList.toggle("focus", c.name === name);
+    if (name && c.name !== name) { destroy(t.view); t.view = null; t.q = null; }   // ukryte – nie pobieraj
+    else setQ(c.name, defaultQ(c));
+  }
+  document.querySelectorAll("#lay button").forEach(b => b.classList.toggle("on", b.dataset.l === (name || "grid")));
+  history.replaceState(null, "", name ? "#cam=" + encodeURIComponent(name) : "#");
+}
+
+$("lay").addEventListener("click", ev => {
+  const b = ev.target.closest("button");
+  if (b) setFocus(b.dataset.l === "grid" ? null : b.dataset.l);
+});
+
+async function refreshToken() {
+  try {
+    const n = await getInfo();
+    info.token = n.token;
+    for (const c of info.cams) {
+      const t = tiles[c.name];
+      if (t && t.view) t.view.wsURL = "ws" + location.origin.substring(4) + wsUrl(t.q === "sd" ? c.sd : c.hd);
+    }
+  } catch (e) {}
+}
+
+try {
+  info = await getInfo();
+} catch (e) {
+  $("grid").innerHTML = `<div class="msg">Błąd: ${esc(e.message)}</div>`;
+  throw e;
+}
+if (!info.enabled || !info.cams.length) {
+  $("grid").innerHTML = `<div class="msg">${esc(info.reason || "Brak kamer do podglądu.")}</div>`;
+} else {
+  const h = new URLSearchParams(location.hash.slice(1)).get("cam");
+  build();
+  if (h && tiles[h]) setFocus(h);
+  setInterval(refreshToken, 3600 * 1000);
+}
+</script>
+</body></html>
