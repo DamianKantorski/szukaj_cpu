@@ -39,6 +39,20 @@ BAD_PINS = {"00000000", "11111111", "22222222", "33333333", "44444444", "5555555
 SNAP_EVENT_S = 60          # tyle sekund po wykryciu zdjęcie z ramkami zdarzenia (do powiadomienia)
 
 
+def _num(v, default):
+    """Wartości z negocjacji HAP-python bywają surowymi bajtami TLV (np. MTU, typ ładunku)."""
+    if isinstance(v, (bytes, bytearray)):
+        return int.from_bytes(v, "little") if v else default
+    try:
+        return int(v) if v not in (None, "") else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _is_opus(codec):
+    return codec in (b"\x03", 3) or str(codec).upper() == "OPUS"
+
+
 def _new_pin():
     while True:
         p = f"{secrets.randbelow(10 ** 8):08d}"
@@ -90,6 +104,14 @@ class HKCamera(Camera):
             self.motion[cls] = svc.configure_char("MotionDetected", value=False)
 
     async def start_stream(self, session_info, stream_config):
+        try:
+            return await self._start(session_info, stream_config)
+        except Exception:
+            log.exception("HomeKit [%s]: błąd uruchamiania podglądu (parametry: %s)", self.cam.name,
+                          {k: v for k, v in stream_config.items() if "srtp" not in k and k != "process"})
+            return False
+
+    async def _start(self, session_info, stream_config):
         addr = stream_config["address"]
         try:
             ipaddress.ip_address(addr)
@@ -97,29 +119,30 @@ class HKCamera(Camera):
             log.warning("HomeKit [%s]: nieprawidłowy adres odbiorcy %r", self.cam.name, addr)
             return False
         cfg = self.hk.cfg
-        v_port = int(stream_config["v_port"])
-        mtu = int(stream_config.get("v_max_mtu") or 1316)
-        audio = self.hk.has_audio(self.cam) and stream_config.get("a_port") and \
-            str(stream_config.get("a_codec", "")).upper() == "OPUS"
+        v_port = _num(stream_config["v_port"], 0)
+        mtu = _num(stream_config.get("v_max_mtu"), 1316) or 1316
+        audio = bool(self.hk.has_audio(self.cam) and stream_config.get("a_port")
+                     and _is_opus(stream_config.get("a_codec")))
         args = [str(cfg.ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin",
                 "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", self.hk.source(self.cam, audio),
                 "-map", "0:v:0", "-an", "-c:v", "copy", "-bsf:v", "dump_extra",
-                "-payload_type", str(int(stream_config.get("v_payload_type") or 99)),
-                "-ssrc", str(int(stream_config["v_ssrc"])),
+                "-payload_type", str(_num(stream_config.get("v_payload_type"), 99)),
+                "-ssrc", str(_num(stream_config["v_ssrc"], 1)),
                 "-f", "rtp", "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
                 "-srtp_out_params", str(stream_config["v_srtp_key"]),
                 f"srtp://{addr}:{v_port}?rtcpport={v_port}&localrtpport={v_port}&pkt_size={min(mtu, 1378)}"]
         if audio:
             # dźwięk kamery (G.711/L16/AAC) -> Opus, jak w integracji HomeKit Home Assistanta
-            a_port = int(stream_config["a_port"])
-            rate = int(stream_config.get("a_sample_rate") or 16)
-            ptime = int(stream_config.get("a_packet_time") or 20)
-            br = int(stream_config.get("a_max_bitrate") or 24)
+            a_port = _num(stream_config["a_port"], 0)
+            rate = _num(stream_config.get("a_sample_rate"), 16)
+            rate = rate if rate in (8, 12, 16, 24, 48) else 16
+            ptime = _num(stream_config.get("a_packet_time"), 20)
+            br = _num(stream_config.get("a_max_bitrate"), 24) or 24
             args += ["-map", "0:a:0", "-vn", "-c:a", "libopus", "-application", "lowdelay",
                      "-frame_duration", str(ptime if ptime in (10, 20, 40, 60) else 20),
                      "-ac", "1", "-ar", f"{rate}k", "-b:a", f"{br}k", "-bufsize", f"{br * 4}k",
-                     "-payload_type", str(int(stream_config.get("a_payload_type") or 110)),
-                     "-ssrc", str(int(stream_config["a_ssrc"])),
+                     "-payload_type", str(_num(stream_config.get("a_payload_type"), 110)),
+                     "-ssrc", str(_num(stream_config["a_ssrc"], 2)),
                      "-f", "rtp", "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
                      "-srtp_out_params", str(stream_config["a_srtp_key"]),
                      f"srtp://{addr}:{a_port}?rtcpport={a_port}&localrtpport={a_port}&pkt_size=188"]
@@ -131,8 +154,10 @@ class HKCamera(Camera):
             log.error("HomeKit [%s]: nie można uruchomić ffmpeg: %s", self.cam.name, e)
             return False
         session_info["process"] = proc
-        log.info("HomeKit [%s]: podgląd dla %s (%sx%s zamówione, wysyłany strumień kamery bez zmian)",
-                 self.cam.name, addr, stream_config.get("width"), stream_config.get("height"))
+        log.info("HomeKit [%s]: podgląd dla %s (zamówione %sx%s@%s, %s kb/s; wysyłany strumień kamery bez zmian%s)",
+                 self.cam.name, addr, stream_config.get("width"), stream_config.get("height"),
+                 stream_config.get("fps"), stream_config.get("v_max_bitrate"),
+                 f", dźwięk Opus {rate} kHz" if audio else ", bez dźwięku")
         asyncio.ensure_future(self._watch(proc))
         return True
 
