@@ -99,14 +99,30 @@ class HKCamera(Camera):
         cfg = self.hk.cfg
         v_port = int(stream_config["v_port"])
         mtu = int(stream_config.get("v_max_mtu") or 1316)
+        audio = self.hk.has_audio(self.cam) and stream_config.get("a_port") and \
+            str(stream_config.get("a_codec", "")).upper() == "OPUS"
         args = [str(cfg.ffmpeg), "-hide_banner", "-loglevel", "error", "-nostdin",
-                "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", self.hk.source(self.cam),
+                "-rtsp_transport", "tcp", "-timeout", "10000000", "-i", self.hk.source(self.cam, audio),
                 "-map", "0:v:0", "-an", "-c:v", "copy", "-bsf:v", "dump_extra",
                 "-payload_type", str(int(stream_config.get("v_payload_type") or 99)),
                 "-ssrc", str(int(stream_config["v_ssrc"])),
                 "-f", "rtp", "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
                 "-srtp_out_params", str(stream_config["v_srtp_key"]),
                 f"srtp://{addr}:{v_port}?rtcpport={v_port}&localrtpport={v_port}&pkt_size={min(mtu, 1378)}"]
+        if audio:
+            # dźwięk kamery (G.711/L16/AAC) -> Opus, jak w integracji HomeKit Home Assistanta
+            a_port = int(stream_config["a_port"])
+            rate = int(stream_config.get("a_sample_rate") or 16)
+            ptime = int(stream_config.get("a_packet_time") or 20)
+            br = int(stream_config.get("a_max_bitrate") or 24)
+            args += ["-map", "0:a:0", "-vn", "-c:a", "libopus", "-application", "lowdelay",
+                     "-frame_duration", str(ptime if ptime in (10, 20, 40, 60) else 20),
+                     "-ac", "1", "-ar", f"{rate}k", "-b:a", f"{br}k", "-bufsize", f"{br * 4}k",
+                     "-payload_type", str(int(stream_config.get("a_payload_type") or 110)),
+                     "-ssrc", str(int(stream_config["a_ssrc"])),
+                     "-f", "rtp", "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
+                     "-srtp_out_params", str(stream_config["a_srtp_key"]),
+                     f"srtp://{addr}:{a_port}?rtcpport={a_port}&localrtpport={a_port}&pkt_size=188"]
         try:
             proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
                                                         stdout=asyncio.subprocess.DEVNULL,
@@ -165,11 +181,18 @@ class HomeKit:
         self.motion_until = {}   # (kamera, klasa) -> czas wyłączenia czujnika
         self.lock = threading.Lock()
 
-    def source(self, cam):
-        """Strumień główny: z go2rtc (bez nowego połączenia z kamerą, tylko obraz) albo z kamery."""
+    def source(self, cam, audio=False):
+        """Strumień główny: z go2rtc (bez nowego połączenia z kamerą) albo prosto z kamery."""
         if self.g2r is not None and cam.name in [c.name for c in self.g2r.cams]:
-            return f"rtsp://127.0.0.1:{self.cfg.g2r_rtsp}/{cam.name}?video"
+            # ?video – go2rtc nie uruchamia wtedy przekodowania dźwięku na AAC (podgląd w przeglądarce)
+            return f"rtsp://127.0.0.1:{self.cfg.g2r_rtsp}/{cam.name}?video" + ("&audio" if audio else "")
         return cam.src_url
+
+    def has_audio(self, cam):
+        """Czy kamera wysyła dźwięk (wg sprawdzenia go2rtc przy starcie; bez go2rtc – zakładamy, że tak)."""
+        if self.g2r is None:
+            return True
+        return bool(self.g2r.audio.get(cam.name))
 
     def snapshot(self, cam):
         ev = self.events.get(cam.name)

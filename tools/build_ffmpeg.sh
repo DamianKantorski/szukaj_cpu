@@ -2,11 +2,12 @@
 # ════════════════════════════════════════════════════════════════════════════
 #  build_ffmpeg.sh – minimalny ffmpeg/ffprobe dla szukaj_cpu
 #
-#  Buduje najnowsze stabilne FFmpeg (+ libjxl) w kontenerze Debiana 13 (trixie),
+#  Buduje FFmpeg 9.1 (+ libjxl, libopus) w kontenerze Debiana 13 (trixie),
 #  zoptymalizowane pod Intel Core i5-7500 (Kaby Lake, -march=skylake), tylko ze
 #  składnikami potrzebnymi szukaj_cpu:
 #    RTSP/RTP, H.264/HEVC (+VAAPI), MJPEG, MPEG-TS/MP4/MKV, segmenty, concat,
-#    filtry scale/select/fps/format/hwdownload, zapis JPEG XL (libjxl), ffprobe.
+#    filtry scale/select/fps/format/hwdownload, zapis JPEG XL (libjxl), dźwięk AAC i Opus
+#    (libopus – podgląd HomeKit), RTSP/SRTP na wyjściu (go2rtc, HomeKit), ffprobe.
 #
 #  Biblioteki kodeków są wbudowane statycznie. Dynamicznie linkowane zostają tylko
 #  glibc oraz libva/libdrm z systemu – sterownik VAAPI (iHD) jest ładowany przez
@@ -20,7 +21,8 @@
 #    bash build_ffmpeg.sh /ścieżka/wyniku
 #
 #  Zmienne (opcjonalne):
-#    FFMPEG_VERSION=n9.0.2   JXL_VERSION=v0.12.0   – zamiast najnowszych tagów
+#    FFMPEG_VERSION=n9.1 (domyślnie; "latest" = najnowszy tag)
+#    JXL_VERSION=v0.12.0  OPUS_VERSION=v1.5.2   – zamiast najnowszych tagów
 #    MARCH=skylake           – architektura docelowa (i5-7500 = Kaby Lake = skylake)
 #    JOBS=16                 – liczba równoległych zadań kompilacji
 #    LTO=1                   – optymalizacja przy linkowaniu (dłużej, ~kilka % szybciej)
@@ -36,6 +38,7 @@ MARCH="${MARCH:-skylake}"
 IMAGE="${IMAGE:-debian:trixie}"
 FF_REPO="https://github.com/FFmpeg/FFmpeg.git"
 JXL_REPO="https://github.com/libjxl/libjxl.git"
+OPUS_REPO="https://github.com/xiph/opus.git"
 
 latest_tag() {   # $1 repo, $2 regex tagu
     git ls-remote --tags --refs "$1" | sed 's|.*refs/tags/||' | grep -E "$2" | sort -V | tail -1
@@ -55,9 +58,11 @@ inside() {
             libva-dev libdrm-dev >/dev/null
     fi
 
-    FFMPEG_VERSION="${FFMPEG_VERSION:-$(latest_tag "$FF_REPO" '^n[0-9]+\.[0-9]+(\.[0-9]+)?$')}"
+    FFMPEG_VERSION="${FFMPEG_VERSION:-n9.1}"
+    [[ "$FFMPEG_VERSION" == latest ]] && FFMPEG_VERSION="$(latest_tag "$FF_REPO" '^n[0-9]+\.[0-9]+(\.[0-9]+)?$')"
     JXL_VERSION="${JXL_VERSION:-$(latest_tag "$JXL_REPO" '^v[0-9]+\.[0-9]+(\.[0-9]+)?$')}"
-    echo "==> FFmpeg $FFMPEG_VERSION, libjxl $JXL_VERSION, -march=$MARCH, $JOBS zadań"
+    OPUS_VERSION="${OPUS_VERSION:-$(latest_tag "$OPUS_REPO" '^v[0-9]+\.[0-9]+(\.[0-9]+)?$')}"
+    echo "==> FFmpeg $FFMPEG_VERSION, libjxl $JXL_VERSION, libopus $OPUS_VERSION, -march=$MARCH, $JOBS zadań"
 
     local CF="-O2 -pipe -march=$MARCH -mtune=$MARCH"
     export CFLAGS="$CF" CXXFLAGS="$CF"
@@ -96,6 +101,15 @@ inside() {
     # libstdc++ wbudowana statycznie (pkg-config libjxl dodaje -lstdc++ = wersja dynamiczna)
     sed -i 's/-lstdc++/-l:libstdc++.a/g' "$PREFIX"/lib/pkgconfig/*.pc
 
+    # ── libopus (statycznie) – koder dźwięku dla podglądu HomeKit ──
+    echo "==> libopus"
+    rm -rf "$SRC/opus"
+    git -c advice.detachedHead=false clone -q --depth 1 --branch "$OPUS_VERSION" "$OPUS_REPO" "$SRC/opus"
+    cmake -S "$SRC/opus" -B "$SRC/b-opus" "${CM[@]}" \
+        -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_BUILD_TESTING=OFF -DOPUS_BUILD_SHARED_LIBRARY=OFF \
+        -DOPUS_DRED=OFF -DOPUS_DEEP_PLC=OFF -DOPUS_OSCE=OFF >/dev/null
+    cmake --build "$SRC/b-opus" -j "$JOBS" >/dev/null && cmake --install "$SRC/b-opus" >/dev/null
+
     # ── FFmpeg: tylko to, czego używa szukaj_cpu ──
     echo "==> FFmpeg"
     rm -rf "$SRC/ffmpeg"
@@ -117,12 +131,12 @@ inside() {
         --enable-ffmpeg --enable-ffprobe --enable-network \
         --enable-avcodec --enable-avformat --enable-avfilter --enable-swscale --enable-swresample \
         "${VAAPI[@]}" \
-        --enable-libjxl \
+        --enable-libjxl --enable-libopus \
         --enable-protocol=file,pipe,tcp,udp,rtp,srtp \
         --enable-demuxer=rtsp,sdp,rtp,mov,mpegts,matroska,concat,rawvideo,h264,hevc,mjpeg,image2 \
         --enable-muxer=rawvideo,segment,mpegts,mp4,mov,matroska,image2,null,rtsp,rtp,adts \
         --enable-decoder=h264,hevc,mjpeg,rawvideo,libjxl,aac,pcm_mulaw,pcm_alaw,pcm_s16be,pcm_s16le,pcm_s24be,pcm_u8,adpcm_g726,adpcm_g726le,adpcm_g722,opus,mp3float \
-        --enable-encoder=rawvideo,wrapped_avframe,libjxl,aac \
+        --enable-encoder=rawvideo,wrapped_avframe,libjxl,aac,libopus \
         --enable-parser=h264,hevc,mjpeg,aac,opus \
         --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,extract_extradata,dump_extradata,null \
         --enable-filter=scale,select,fps,format,null,copy,setpts,trim,aresample,aformat,anull,asetpts \
@@ -135,6 +149,7 @@ inside() {
     {
         echo "FFmpeg:     $FFMPEG_VERSION"
         echo "libjxl:     $JXL_VERSION"
+        echo "libopus:    $OPUS_VERSION"
         echo "Cel:        -march=$MARCH (Intel Core i5-7500 / Kaby Lake)"
         echo "Zbudowano:  $(date -Is) na $(. /etc/os-release; echo "$PRETTY_NAME"), $(ldd --version | head -1)"
         echo
@@ -175,7 +190,7 @@ fi
 
 echo "==> Budowanie w kontenerze $IMAGE ($RT), wynik: $OUT_HOST"
 "$RT" run --rm \
-    -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}" \
+    -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}" -e OPUS_VERSION="${OPUS_VERSION:-}" \
     -e MARCH="$MARCH" -e JOBS="${JOBS:-}" -e LTO="${LTO:-0}" -e NO_VAAPI="${NO_VAAPI:-0}" \
     -v "$SELF:/build_ffmpeg.sh:ro" -v "$OUT_HOST:/out" \
     "$IMAGE" bash -c "bash /build_ffmpeg.sh --inside && chown -R $(id -u):$(id -g) /out"

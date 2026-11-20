@@ -246,7 +246,8 @@ authorised by a token the logged-in page receives.
 
 * Live view: the H.264 main stream is copied to SRTP by ffmpeg straight from go2rtc
   (`rtsp://127.0.0.1:8554/<camera>?video`) – no transcoding, no extra camera connection.
-  HomeKit accepts only H.264, so keep the main stream in H.264. No audio for now.
+  HomeKit accepts only H.264, so keep the main stream in H.264. Camera audio (G.711, L16,
+  AAC) is encoded to Opus for HomeKit (audio only, while someone is watching).
 * `homekit_motion = ["person", "car"]` adds motion sensors to the camera accessory, driven
   by detection (the classes must be in `[detection] classes`; parked cars are ignored by the
   stationary-object filter). Enable notifications for them in the Home app – because they

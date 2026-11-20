@@ -22,7 +22,7 @@
 #    --no-ffmpeg | --no-models | --no-wheels | --no-go2rtc   pomiń składnik
 #  Zmienne:
 #    MODELS="yolo11s.pt yolo26s.pt"  MODEL_SIZES="960x544 640x384"  MARCH=skylake  JOBS=…  LTO=1
-#    FFMPEG_VERSION=n8.0  JXL_VERSION=v0.11.1   (domyślnie najnowsze wydania)
+#    FFMPEG_VERSION=n9.1 (domyślnie)  JXL_VERSION=v0.12.0  OPUS_VERSION=v1.5.2   (domyślnie najnowsze wydania)
 #    GO2RTC_VERSION=1.9.15
 #    IMAGE=debian:trixie   BUILD_CA_CERT=/ścieżka/ca.crt (gdy sieć ma własny certyfikat proxy)
 # ════════════════════════════════════════════════════════════════════════════
@@ -75,7 +75,7 @@ if [ "$INSIDE" = 0 ] && [ "$NO_CONTAINER" = 0 ] && { [ "$FULL" = 1 ] || ! comman
     VOL=(-v "$ROOT:/src")
     ENVS=(-e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" -e MODEL_SIZES="$MODEL_SIZES" -e MODELS="$MODELS"
           -e MARCH="$MARCH" -e JOBS="${JOBS:-}" -e LTO="${LTO:-0}"
-          -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}" -e GO2RTC_VERSION="$GO2RTC_VERSION")
+          -e FFMPEG_VERSION="${FFMPEG_VERSION:-}" -e JXL_VERSION="${JXL_VERSION:-}" -e OPUS_VERSION="${OPUS_VERSION:-}" -e GO2RTC_VERSION="$GO2RTC_VERSION")
     INNER=()
     for a in "${ARGS[@]}"; do INNER+=("$a"); done
     if [ -n "$CALIB" ]; then
