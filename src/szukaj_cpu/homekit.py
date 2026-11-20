@@ -8,6 +8,7 @@ Stan (klucze, sparowane urządzenia) i kody parowania są w ~/.szukaj_cpu/homeki
 """
 
 import asyncio
+import base64
 import ipaddress
 import json
 import logging
@@ -76,6 +77,68 @@ def _setup_id():
     return "".join(secrets.choice(abc) for _ in range(4))
 
 
+class AudioRelay:
+    """RTP z ffmpeg (Opus, zegar 48 kHz) -> SRTP do iPhone'a z zegarem zamówionej częstotliwości."""
+
+    def __init__(self, name, addr, port, key_b64, ssrc, pt, rate):
+        self.name, self.dest, self.port, self.local_port = name, (addr, port), port, port
+        self.key, self.ssrc, self.pt, self.scale = base64.b64decode(key_b64), ssrc, pt, rate / 48
+        self.inp = self.out = self.srtp = None
+        self.base_in = None
+        self.base_out = secrets.randbits(32)
+        self.sent = 0
+
+    async def open(self):
+        from pylibsrtp import Policy, Session
+        if len(self.key) != 30:
+            raise ValueError("nieprawidłowy klucz SRTP")
+        self.srtp = Session(policy=Policy(key=self.key, ssrc_type=Policy.SSRC_ANY_OUTBOUND,
+                                          srtp_profile=Policy.SRTP_PROFILE_AES128_CM_SHA1_80))
+        loop = asyncio.get_running_loop()
+        relay = self
+
+        class In(asyncio.DatagramProtocol):
+            def datagram_received(self, data, addr):
+                relay.forward(data)
+
+        # wysyłka z portu = port iPhone'a (jak localrtpport w ffmpeg); odbiór RTCP z iPhone'a ignorujemy
+        self.out, _ = await loop.create_datagram_endpoint(asyncio.DatagramProtocol,
+                                                          local_addr=("0.0.0.0", self.local_port), remote_addr=self.dest)
+        self.inp, _ = await loop.create_datagram_endpoint(In, local_addr=("127.0.0.1", 0))
+        return self.inp.get_extra_info("sockname")[1]
+
+    def _ts(self, ts):
+        if self.base_in is None:
+            self.base_in = ts
+        return (self.base_out + int(((ts - self.base_in) & 0xFFFFFFFF) * self.scale)) & 0xFFFFFFFF
+
+    def forward(self, data):
+        if self.out is None or len(data) < 12 or data[0] >> 6 != 2:
+            return
+        b = bytearray(data)
+        try:
+            if 200 <= b[1] <= 204:                       # RTCP (SR: SSRC i znacznik RTP)
+                b[4:8] = self.ssrc.to_bytes(4, "big")
+                if b[1] == 200 and len(b) >= 28 and self.base_in is not None:
+                    b[20:24] = self._ts(int.from_bytes(b[20:24], "big")).to_bytes(4, "big")
+                pkt = self.srtp.protect_rtcp(bytes(b))
+            else:
+                b[1] = (b[1] & 0x80) | (self.pt & 0x7F)
+                b[4:8] = self._ts(int.from_bytes(b[4:8], "big")).to_bytes(4, "big")
+                b[8:12] = self.ssrc.to_bytes(4, "big")
+                pkt = self.srtp.protect(bytes(b))
+                self.sent += 1
+            self.out.sendto(pkt)
+        except Exception as e:                             # pojedynczy pakiet – nie przerywaj strumienia
+            log.debug("HomeKit [%s]: pakiet dźwięku pominięty: %s", self.name, e)
+
+    def close(self):
+        for t in (self.inp, self.out):
+            if t is not None:
+                t.close()
+        self.inp = self.out = None
+
+
 class HKCamera(Camera):
     def __init__(self, hk, cam, driver):
         options = {
@@ -131,44 +194,62 @@ class HKCamera(Camera):
                 "-f", "rtp", "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
                 "-srtp_out_params", str(stream_config["v_srtp_key"]),
                 f"srtp://{addr}:{v_port}?rtcpport={v_port}&localrtpport={v_port}&pkt_size={min(mtu, 1378)}"]
+        relay = None
         if audio:
-            # dźwięk kamery (G.711/L16/AAC) -> Opus, jak w integracji HomeKit Home Assistanta
+            # Dźwięk kamery (G.711/L16/AAC) -> Opus. ffmpeg wysyła zwykłe RTP do nas, a my przepisujemy
+            # znaczniki czasu i szyfrujemy (SRTP): RTP Opus w ffmpeg ma zawsze zegar 48 kHz, a Apple
+            # liczy czas wg zamówionej częstotliwości (16/24 kHz) – inaczej dźwięk przerywa co chwilę.
             a_port = _num(stream_config["a_port"], 0)
             rate = _num(stream_config.get("a_sample_rate"), 16)
-            rate = rate if rate in (8, 12, 16, 24, 48) else 16
+            rate = rate if rate in (8, 16, 24) else 16
             ptime = _num(stream_config.get("a_packet_time"), 20)
+            ptime = ptime if ptime in (20, 40, 60) else 20
             br = _num(stream_config.get("a_max_bitrate"), 24) or 24
-            args += ["-map", "0:a:0", "-vn", "-c:a", "libopus", "-application", "lowdelay",
-                     "-frame_duration", str(ptime if ptime in (10, 20, 40, 60) else 20),
-                     "-ac", "1", "-ar", f"{rate}k", "-b:a", f"{br}k", "-bufsize", f"{br * 4}k",
-                     "-payload_type", str(_num(stream_config.get("a_payload_type"), 110)),
-                     "-ssrc", str(_num(stream_config["a_ssrc"], 2)),
-                     "-f", "rtp", "-srtp_out_suite", "AES_CM_128_HMAC_SHA1_80",
-                     "-srtp_out_params", str(stream_config["a_srtp_key"]),
-                     f"srtp://{addr}:{a_port}?rtcpport={a_port}&localrtpport={a_port}&pkt_size=188"]
+            relay = AudioRelay(self.cam.name, addr, a_port, str(stream_config["a_srtp_key"]),
+                               _num(stream_config["a_ssrc"], 2), _num(stream_config.get("a_payload_type"), 110), rate)
+            try:
+                lport = await relay.open()
+            except Exception as e:
+                log.warning("HomeKit [%s]: dźwięk wyłączony – %s", self.cam.name, e)
+                relay.close()
+                relay, audio = None, False
+            else:
+                args += ["-map", "0:a:0", "-vn", "-c:a", "libopus", "-application", "lowdelay",
+                         "-frame_duration", str(ptime), "-min_comp", "0",
+                         "-ac", "1", "-ar", f"{rate}k", "-b:a", f"{br}k",
+                         "-payload_type", "110", "-ssrc", "1",
+                         "-f", "rtp", f"rtp://127.0.0.1:{lport}?rtcpport={lport}&pkt_size=1200"]
         try:
             proc = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
                                                         stdout=asyncio.subprocess.DEVNULL,
                                                         stderr=asyncio.subprocess.PIPE)
         except OSError as e:
             log.error("HomeKit [%s]: nie można uruchomić ffmpeg: %s", self.cam.name, e)
+            if relay is not None:
+                relay.close()
             return False
         session_info["process"] = proc
+        session_info["relay"] = relay
         log.info("HomeKit [%s]: podgląd dla %s (zamówione %sx%s@%s, %s kb/s; wysyłany strumień kamery bez zmian%s)",
                  self.cam.name, addr, stream_config.get("width"), stream_config.get("height"),
                  stream_config.get("fps"), stream_config.get("v_max_bitrate"),
-                 f", dźwięk Opus {rate} kHz" if audio else ", bez dźwięku")
-        asyncio.ensure_future(self._watch(proc))
+                 f", dźwięk Opus {rate} kHz / {ptime} ms" if audio else ", bez dźwięku")
+        asyncio.ensure_future(self._watch(proc, relay))
         return True
 
-    async def _watch(self, proc):
+    async def _watch(self, proc, relay=None):
         err = await proc.stderr.read()
         rc = await proc.wait()
+        if relay is not None:
+            relay.close()
         if rc not in (0, 255, -15) and err:
             log.warning("HomeKit [%s]: ffmpeg zakończony (%s): %s", self.cam.name, rc,
                         err.decode(errors="replace").strip().splitlines()[-1][:300])
 
     async def stop_stream(self, session_info):
+        relay = session_info.pop("relay", None)
+        if relay is not None:
+            relay.close()
         proc = session_info.get("process")
         if proc is None or proc.returncode is not None:
             return
