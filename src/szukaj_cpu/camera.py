@@ -138,6 +138,8 @@ class Camera:
         self.src_url, self.src_analysis = spec.url, spec.analysis_url     # adresy kamery (go2rtc zmienia url)
         self.record = getattr(spec, "record", False)
         self.record_dir = getattr(spec, "record_dir", None)
+        self.homekit = getattr(spec, "homekit", False)
+        self.homekit_motion = getattr(spec, "homekit_motion", [])
         self.staging = self.record_dir / ".nagrywanie" if self.record_dir else None
         self.rec_buffer = cfg.clips and self.separate      # bufor klipów w procesie nagrywania
         self.rec_proc = None

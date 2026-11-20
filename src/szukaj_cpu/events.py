@@ -16,10 +16,12 @@ def on_detections(cfg, cam, t, frame, dets):
     best = max(d[4] for d in dets)
     labels = {d[5] for d in dets}
     ev = cam.event
+    new_labels = set()
     if ev is not None and t - ev["end"] <= cfg.gap:
         ev["end"] = t
         ev["hits"] += 1
         ev["max_n"] = max(ev["max_n"], len(dets))
+        new_labels = labels - ev["labels"]
         ev["labels"] |= labels
         if best > ev["best"]:
             ev.update(best=best, frame=frame, dets=dets, best_t=t)
@@ -31,6 +33,13 @@ def on_detections(cfg, cam, t, frame, dets):
         ev["announced"] = True
         log.info("[%s] wykryto: %s", cam.name, ", ".join(sorted(ev["labels"])))
         notify(cfg, cam, frame, dets, ev["labels"])
+        if getattr(cfg, "hk_obj", None):
+            cfg.hk_obj.on_detection(cam, ev["labels"], frame, dets)
+    elif ev["announced"] and getattr(cfg, "hk_obj", None):
+        # np. najpierw samochód, potem osoba – nowy czujnik; widoczne dalej – podtrzymanie
+        if new_labels:
+            cfg.hk_obj.on_detection(cam, new_labels, frame, dets)
+        cfg.hk_obj.keep_alive(cam, labels)
     # oś czasu Shinobi: przy starcie zdarzenia i co "ponawiaj" s, dopóki obiekt jest widoczny
     if ev["announced"] and cfg.sh_repeat >= 0 and (
             ev["sh_sent"] == 0 or (cfg.sh_repeat > 0 and t - ev["sh_sent"] >= cfg.sh_repeat)):

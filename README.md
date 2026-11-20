@@ -63,6 +63,7 @@ src/szukaj_cpu/
   clips.py     clips and full-resolution frames from the main stream
   notify.py    ntfy and Shinobi
   main.py      arguments, main loop, --test, --init
+  homekit.py   HomeKit accessories (cameras + motion sensors)
   web/         web server, detection-area page (area.html), recordings (nagrania.html,
                recordings.py), live view (live.html, live.py), configurator (config.html),
                TOML editing, model upload
@@ -179,7 +180,7 @@ departure and movement still raise events. The list survives restarts
 
 Since 1.9 szukaj_cpu can record continuously and needs only one connection per camera
 stream. It is the first step to replacing Shinobi (and Home Assistant for HomeKit); a
-HomeKit follows.
+
 
 * **go2rtc** (bundled, `[go2rtc]`) connects to each camera stream once and restreams it
   locally – `rtsp://127.0.0.1:8554/<camera>` and `/<camera>_sub`. Detection, the clip buffer
@@ -236,6 +237,25 @@ disabled. A stream stops when the tab is hidden.
 go2rtc itself stays on 127.0.0.1 (its API can add sources and run commands). szukaj_cpu
 passes through only the WebSocket `/api/ws?src=<camera stream>` and the player script,
 authorised by a token the logged-in page receives.
+
+### HomeKit (Apple Home)
+
+`[homekit] enabled = true` and `homekit = true` on a camera show it in the Home app
+(iPhone, iPad, Apple TV, Mac). Each camera is its own accessory (HAP-python) on port
+51826, 51827…; pair it with the QR code / setup code shown in Configuration → HomeKit.
+
+* Live view: the H.264 main stream is copied to SRTP by ffmpeg straight from go2rtc
+  (`rtsp://127.0.0.1:8554/<camera>?video`) – no transcoding, no extra camera connection.
+  HomeKit accepts only H.264, so keep the main stream in H.264. No audio for now.
+* `homekit_motion = ["person", "car"]` adds motion sensors to the camera accessory, driven
+  by detection (the classes must be in `[detection] classes`; parked cars are ignored by the
+  stationary-object filter). Enable notifications for them in the Home app – because they
+  live in the camera accessory, notifications carry a snapshot (the detection frame with boxes).
+* Snapshots for the Home app tiles come from the analysis stream.
+* State and pairing keys: `~/.szukaj_cpu/homekit/` (delete a camera's files or use
+  "Usuń parowanie" in the panel, then restart, to pair again).
+* Replaces the HomeKit integration of Home Assistant: remove the cameras there and from the
+  Home app first. The server must be in the same LAN as the Apple devices (mDNS).
 
 ### Recordings page (`/admin/nagrania`)
 

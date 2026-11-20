@@ -18,6 +18,7 @@ from .clips import Clipper
 from .common import DEFAULT_CONF, APP_DIR, STOP, expand, list_segments, log
 from .config import load_config, tool_version
 from .detector import Detector, detect, draw
+from .homekit import HomeKit
 from .events import close_event, load_static, process, save_static
 from .go2rtc import Go2rtc
 from .recorder import Recorder
@@ -187,7 +188,10 @@ def main():
     threading.Thread(target=clipper.loop, name="klipy", daemon=True).start()
     if recorder.cams:
         threading.Thread(target=recorder.loop, name="nagrania", daemon=True).start()
-    start_http(cfg, cams, det, gallery, g2r)
+    hk = HomeKit(cfg, cams, g2r)
+    hk.start()
+    cfg.hk_obj = hk if hk.items else None
+    start_http(cfg, cams, det, gallery, g2r, hk)
     load_static(cfg, cams)
     gallery.cleanup()
     last_cleanup = last_stats = time.time()
@@ -232,6 +236,7 @@ def main():
         if cam.event is not None:
             close_event(cfg, cam, gallery, clipper)
     clipper.run_due(force=True)
+    hk.stop()
     recorder.shutdown()
     if g2r is not None:
         g2r.stop()

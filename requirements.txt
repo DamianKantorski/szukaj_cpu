@@ -3,3 +3,6 @@
 openvino>=2025.0
 opencv-python-headless>=4.8
 numpy>=1.26
+# HomeKit (kamery w aplikacji Dom, czujniki ruchu) i kod QR parowania
+HAP-python>=5.2
+segno>=1.6

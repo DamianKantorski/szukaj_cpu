@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from .common import CONF_DIR, APP_DIR, expand
+from .common import COCO80, CONF_DIR, APP_DIR, expand
 
 
 def check_zone(pts):
@@ -118,7 +118,9 @@ SCHEMA = {
     "shinobi": {"url", "api_key", "group_key", "repeat_seconds"},
     "recording": {"enabled", "segment_minutes", "retention_days", "min_free_gb", "audio"},
     "go2rtc": {"enabled", "binary", "api_port", "rtsp_port", "rtsp_listen", "webrtc_port"},
-    "camera": {"name", "url", "analysis_url", "enabled", "zone", "crop", "shinobi_monitor", "record", "record_dir"},
+    "homekit": {"enabled", "port", "address", "motion_seconds"},
+    "camera": {"name", "url", "analysis_url", "enabled", "zone", "crop", "shinobi_monitor", "record", "record_dir",
+               "homekit", "homekit_motion"},
 }
 
 
@@ -265,6 +267,16 @@ def load_config(path):
     c.g2r_listen = get("go2rtc", "rtsp_listen", "127.0.0.1", str).strip() or "127.0.0.1"
     c.g2r_webrtc = get("go2rtc", "webrtc_port", 8555, int)
 
+    c.hk = get("homekit", "enabled", False, bool)
+    c.hk_port = get("homekit", "port", 51826, int)
+    c.hk_address = get("homekit", "address", "auto", str).strip() or "auto"
+    if c.hk_address != "auto":
+        try:
+            ipaddress.ip_address(c.hk_address)
+        except ValueError:
+            sys.exit(f"{path}: [homekit] address: \"{c.hk_address}\" nie jest adresem IP (albo \"auto\")")
+    c.hk_motion_s = max(2.0, get("homekit", "motion_seconds", 10.0, float))
+
     c.cams = []
     cams = data.get("camera", [])
     if not isinstance(cams, list):
@@ -284,6 +296,16 @@ def load_config(path):
         record = cam.get("record", True)
         if not isinstance(record, bool):
             sys.exit(f"{where}: record must be true or false")
+        hk = cam.get("homekit", False)
+        if not isinstance(hk, bool):
+            sys.exit(f"{where}: homekit must be true or false")
+        hk_motion = cam.get("homekit_motion", [])
+        if not isinstance(hk_motion, list) or not all(isinstance(x, str) for x in hk_motion):
+            sys.exit(f"{where}: homekit_motion must be a list of class names, e.g. [\"person\", \"car\"]")
+        hk_motion = list(dict.fromkeys(x.strip() for x in hk_motion if x.strip()))
+        bad = [x for x in hk_motion if x not in COCO80]
+        if bad:
+            sys.exit(f"{where}: homekit_motion: unknown class {', '.join(bad)} (COCO names, e.g. person, car)")
         rdir = expand(str(cam.get("record_dir", "")).strip())
         if rdir is None:
             rdir = default_record_dir(c.nagrania, c.sh_group, monitor, name)
@@ -291,7 +313,8 @@ def load_config(path):
                                       monitor=monitor,
                                       analysis_url=str(cam.get("analysis_url", "")).strip(),
                                       crop=parse_crop(cam.get("crop", []), where),
-                                      record=record and c.rec, record_dir=rdir))
+                                      record=record and c.rec, record_dir=rdir,
+                                      homekit=hk and c.hk, homekit_motion=hk_motion if hk and c.hk else []))
     rdirs = [str(x.record_dir) for x in c.cams if x.record and x.record_dir]
     dup = {d for d in rdirs if rdirs.count(d) > 1}
     if dup:

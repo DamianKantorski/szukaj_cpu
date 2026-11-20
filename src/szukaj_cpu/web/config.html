@@ -93,6 +93,10 @@ table.chg td.o{color:#ff9d9d;width:28%}table.chg td.n{color:#9de3bd}table.chg td
 .field.wide{grid-template-columns:minmax(0,1fr)}.field>*{min-width:0}
 .mstat{font-size:14px;margin-bottom:10px}.okk{color:var(--ok)}.w{color:var(--warn)}.e{color:var(--err)}
 .tblwrap{overflow-x:auto}
+.hkc{border-top:1px solid var(--line);padding:10px 0}.hkc:first-child{border-top:0;padding-top:0}
+.hkt{margin-bottom:6px}.hkp{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:6px 0}.hkp>div:last-child{flex:1;min-width:220px}
+.qr svg{display:block;width:150px;height:150px;border-radius:6px}.pin{font-size:20px;letter-spacing:1px}
+label.chk{display:inline-flex;gap:5px;align-items:center;font-size:14px}
 table.models{width:100%;border-collapse:collapse;font-size:14px}
 table.models th{text-align:left;color:var(--mut);font-weight:500;font-size:12.5px;padding:4px 8px;border-bottom:1px solid var(--line)}
 table.models td{padding:8px;border-bottom:1px solid var(--line);vertical-align:middle}
@@ -177,6 +181,7 @@ window.addEventListener("hashchange", () => show(location.hash.slice(1)));
 /* ───── pola ───── */
 function fieldHTML(g, f) {
   if (f.type === "models") return `<div class="field wide" id="models_w"><div id="models" class="hint">Wczytywanie listy modeli…</div></div>`;
+  if (f.type === "homekit") return `<div class="field wide" id="hk_w"><div id="hk" class="hint">Wczytywanie stanu HomeKit…</div></div>`;
   const s = sec(g), id = `f_${s}_${f.key}`, v = cur.values[s][f.key];
   let c = "";
   if (f.type === "bool") c = `<label class="sw"><input type="checkbox" id="${id}" ${v ? "checked" : ""}><span></span></label><span class="hint" id="${id}_t">${v ? "włączone" : "wyłączone"}</span>`;
@@ -205,6 +210,7 @@ function fieldHTML(g, f) {
 }
 function bindField(g, f) {
   if (f.type === "models") return loadModels();
+  if (f.type === "homekit") return loadHomekit();
   const s = sec(g), id = `f_${s}_${f.key}`, el = $(id);
   const set = v => { cur.values[s][f.key] = v; changed(); };
   if (f.type === "bool") el.onchange = () => { $(id + "_t").textContent = el.checked ? "włączone" : "wyłączone"; set(el.checked); };
@@ -316,6 +322,11 @@ function camCard(c, i) {
      <div class="ctl" style="margin-top:6px"><input class="url" type="text" id="rd_${i}" data-ci="${i}" data-ck="record_dir" value="${esc(c.record_dir || "")}" list="recdirs" placeholder="${esc(c.record_dir_default || "katalog nagrań")}" spellcheck="false"></div>
      <p class="hint">Katalog nagrań. Puste = jak w Shinobi${c.record_dir_default ? `: <code>${esc(c.record_dir_default)}</code>` : ""}.
        ${RECDIRS && RECDIRS.length ? `Znalezione katalogi z nagraniami: ${RECDIRS.map(d => `<button type="button" class="link sm" data-rd="${i}" data-path="${esc(d.path)}" title="${d.files} plików, ostatni ${esc(d.newest)}">${esc(d.path.replace(RECROOT, "…"))}</button>`).join(" ")}` : ""}</p></div>
+    <div class="row"><label>HomeKit</label>
+     <div class="ctl"><label class="sw" title="pokaż kamerę w aplikacji Dom"><input type="checkbox" data-ci="${i}" data-ck="homekit" ${c.homekit ? "checked" : ""} ${c._del ? "disabled" : ""}><span></span></label>
+     <span class="hint">${c.homekit ? "w aplikacji Dom" : "poza HomeKit"}${cur.values.homekit && !cur.values.homekit.enabled ? " (HomeKit wyłączony w zakładce HomeKit)" : ""}</span></div>
+     <div class="ctl hkm" style="margin-top:6px;flex-wrap:wrap;gap:4px 14px" ${c.homekit ? "" : "hidden"}>${HK_CLASSES.map(k => `<label class="chk"><input type="checkbox" data-hkm="${i}" value="${k}" ${(c.homekit_motion || []).includes(k) ? "checked" : ""}> ${HK_LABELS[k]}</label>`).join("")}</div>
+     <p class="hint">Czujniki ruchu w akcesorium kamery: w aplikacji Dom włącz dla nich powiadomienia, a dostaniesz je ze zdjęciem z chwili wykrycia. Klasa musi być na liście wykrywanych (Wykrywanie → Klasy).</p></div>
     <details class="wiz" ${!c.orig && !c.url ? "open" : ""}><summary>Kreator adresów RTSP</summary>
      <div class="grid">
       <div><label>Producent</label><select id="w_v_${i}">${Object.entries(VENDORS).map(([k, v]) => `<option value="${k}" ${k === (p.vendor || "dahua") ? "selected" : ""}>${v.name}</option>`).join("")}</select></div>
@@ -347,12 +358,27 @@ function renderCams() {
     renderCams(); changed(); const n = cur.cameras.length - 1; $("cam_" + n).scrollIntoView({behavior: "smooth", block: "start"});
   };
 }
+const HK_CLASSES = ["person", "car", "truck", "motorcycle", "bicycle", "dog", "cat"];
+const HK_LABELS = {person: "osoba", car: "samochód", truck: "ciężarówka", motorcycle: "motocykl", bicycle: "rower", dog: "pies", cat: "kot"};
 document.addEventListener("input", e => {
-  const t = e.target; if (t.dataset.ci === undefined) return;
+  const t = e.target;
+  if (t.dataset.hkm !== undefined) {
+    const c = cur.cameras[Number(t.dataset.hkm)];
+    const set = new Set(c.homekit_motion || []);
+    t.checked ? set.add(t.value) : set.delete(t.value);
+    c.homekit_motion = HK_CLASSES.filter(k => set.has(k));
+    changed();
+    return;
+  }
+  if (t.dataset.ci === undefined) return;
   const c = cur.cameras[Number(t.dataset.ci)];
   c[t.dataset.ck] = t.type === "checkbox" ? t.checked : t.value;
   if (t.dataset.ck === "enabled") t.parentElement.nextElementSibling.textContent = t.checked ? "włączona" : "wyłączona";
   if (t.dataset.ck === "record") t.parentElement.nextElementSibling.textContent = t.checked ? "nagrywa" : "nie nagrywa";
+  if (t.dataset.ck === "homekit") {
+    t.parentElement.nextElementSibling.textContent = t.checked ? "w aplikacji Dom" : "poza HomeKit";
+    const m = t.closest(".row").querySelector(".hkm"); if (m) m.hidden = !t.checked;
+  }
   changed();
 });
 document.addEventListener("click", async e => {
@@ -405,7 +431,7 @@ document.addEventListener("click", async e => {
 /* ───── stan i zapis ───── */
 function payload() {
   return {values: cur.values, clear: cur.clear, version,
-          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, record: c.record !== false, record_dir: c.record_dir || "", url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
+          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, record: c.record !== false, record_dir: c.record_dir || "", homekit: !!c.homekit, homekit_motion: c.homekit_motion || [], url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
 }
 function diffCount() {
   const n = {};
@@ -422,7 +448,8 @@ function diffCount() {
   let k = 0;
   cur.cameras.forEach((c, i) => {
     const o = orig.cameras.find(x => x.orig === c.orig && c.orig);
-    const ch = !o || c._del || ["name", "enabled", "record", "record_dir", "url", "analysis_url", "shinobi_monitor"].some(x => (c[x] ?? "") !== (o[x] ?? ""));
+    const ch = !o || c._del || ["name", "enabled", "record", "record_dir", "url", "analysis_url", "shinobi_monitor"].some(x => (c[x] ?? "") !== (o[x] ?? ""))
+      || !!c.homekit !== !!o.homekit || !same(c.homekit_motion || [], o.homekit_motion || []);
     const el = $("cam_" + i); if (el) el.classList.toggle("chg", ch);
     if (ch) k++;
   });
@@ -453,6 +480,34 @@ function wantedName() {
   return {stem: stemOf(cur.values.paths.model), w, h, size: w === h ? `${w}` : `${w}x${h}`, prec: d.precision};
 }
 function modelName(stem, size, int8) { return `${stem}_${size}${int8 ? "_int8" : ""}_openvino_model`; }
+async function loadHomekit() {
+  const el = $("hk"); if (!el) return;
+  let st;
+  try { st = await api("/api/homekit"); }
+  catch (e) { el.innerHTML = `<span class="e">Nie udało się wczytać stanu HomeKit: ${esc(e.message)}</span>`; return; }
+  if (st.error) { el.innerHTML = `<span class="e">Brak biblioteki HAP-python: ${esc(st.error)}</span>`; return; }
+  if (!st.cams.length) {
+    el.innerHTML = st.enabled ? "Żadna kamera nie jest w HomeKit – włącz ją w zakładce Kamery i zrestartuj usługę."
+      : "HomeKit jest wyłączony. Włącz go powyżej, wybierz kamery w zakładce Kamery, zapisz i zrestartuj usługę.";
+    return;
+  }
+  el.innerHTML = st.cams.map(c => {
+    if (!c.running) return `<div class="hkc"><b>${esc(c.name)}</b> – nie działa (szczegóły w logu usługi).</div>`;
+    const mot = c.motion.length ? `Czujniki: ${c.motion.map(m => `${esc(m.label)}${m.on ? " <span class=\"okk\">● ruch</span>" : ""}`).join(", ")}.` : "Bez czujników ruchu.";
+    return `<div class="hkc"><div class="hkt"><b>${esc(c.name)}</b> · ${c.paired ? `<span class="okk">sparowane</span> (${c.clients} urządz.)` : `<span class="e">niesparowane</span>`} · ${esc(c.address)}:${c.port}</div>
+      ${c.paired ? "" : `<div class="hkp">${c.qr ? `<div class="qr">${c.qr}</div>` : ""}<div>Kod: <code class="pin">${esc(c.pin)}</code><br>
+        <span class="hint">Aplikacja Dom → + → Dodaj akcesorium → zeskanuj kod QR albo „Więcej opcji…” i wpisz kod. iPhone musi być w tej samej sieci co serwer.</span></div></div>`}
+      <div class="hint">${mot}</div>
+      <button type="button" class="sm" data-hkreset="${esc(c.name)}">Usuń parowanie…</button></div>`;
+  }).join("");
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("[data-hkreset]"); if (!b) return;
+  const n = b.dataset.hkreset;
+  if (!confirm(`Usunąć parowanie kamery ${n}? Usuń ją też z aplikacji Dom. Po restarcie usługi dostanie nowy kod.`)) return;
+  try { await api("/api/homekit/reset", {camera: n}); b.outerHTML = `<span class="okk">Parowanie usunięte – zrestartuj usługę.</span>`; }
+  catch (err) { alert(err.message); }
+});
 async function loadModels() {
   try { MODELS = await api("/api/models"); drawModels(); }
   catch (e) { if ($("models")) $("models").innerHTML = `<span class="e">Nie udało się wczytać listy modeli: ${esc(e.message)}</span>`; }

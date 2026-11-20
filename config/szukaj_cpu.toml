@@ -218,6 +218,21 @@ rtsp_port = 8554
 api_port = 1984
 
 
+[homekit]
+# Cameras in the Apple Home app (iPhone, iPad, Apple TV) and motion sensors fed by
+# detection (person, car…) with notifications that include a snapshot. Each camera with
+# homekit = true is its own accessory; pair it with the code/QR shown in the web panel
+# (Configuration -> HomeKit). Video is sent as is (H.264 main stream, no transcoding).
+# Replaces the HomeKit integration of Home Assistant – stop that one first (ports, pairing).
+enabled = false
+# first accessory port; next cameras use port+1, port+2…
+port = 51826
+# server IP the iPhone/Apple TV connect to; "auto" = address of the default route
+address = "auto"
+# a motion sensor returns to "no motion" this many seconds after the last detection
+motion_seconds = 10
+
+
 # ─── Cameras: one [[camera]] block per stream ─────────────────────────
 #   name            – short name (used in file names and the gallery)
 #   url             – full RTSP address of the recorded (main) stream; clips are cut from it
@@ -230,6 +245,9 @@ api_port = 1984
 #                     [recording] enabled = true)
 #   record_dir      – own recording directory instead of the Shinobi-style one
 #   shinobi_monitor – Shinobi Monitor ID (monitor settings), "" = no timeline marking
+#   homekit         – true = show this camera in the Apple Home app ([homekit] enabled)
+#   homekit_motion  – motion sensors in the camera accessory, one per class, e.g.
+#                     ["person", "car"]; the classes must be in [detection] classes
 #   crop            – optional rectangle [x1, y1, x2, y2] (0–1) – only this part of
 #                     the frame is analysed (people appear larger to the model);
 #                     [] = whole frame. Easiest to set in the web panel /admin/

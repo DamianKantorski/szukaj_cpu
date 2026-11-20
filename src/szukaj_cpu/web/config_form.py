@@ -121,6 +121,22 @@ FORM = [
           min=0, max=100000, unit="GB"),
         F("audio", "Nagrywaj dźwięk", "bool", False, "Dźwięk z kamery zapisywany jako AAC (lekkie kodowanie na CPU)."),
     ]},
+    {"id": "homekit", "title": "HomeKit",
+     "desc": "Kamery w aplikacji Dom na iPhonie, iPadzie i Apple TV (podgląd bez przekodowania) oraz czujniki "
+             "ruchu z wykrywania (np. osoba, samochód) z powiadomieniami ze zdjęciem. Każdą kamerę i jej czujniki "
+             "włączysz w zakładce Kamery. Zastępuje integrację HomeKit z Home Assistanta.",
+     "fields": [
+        F("enabled", "HomeKit", "bool", False, "Wymaga restartu usługi."),
+        F("port", "Pierwszy port", "int", 51826,
+          "Każda kamera to osobne akcesorium na kolejnym porcie (51826, 51827…). Port nie może być zajęty, "
+          "np. przez Home Assistanta.", min=1024, max=65000, restart_note=True),
+        F("address", "Adres serwera w sieci", "text", "auto",
+          "Adres IP, pod którym iPhone i Apple TV widzą serwer. auto = adres z trasą domyślną.",
+          restart_note=True),
+        F("motion_seconds", "Czujnik ruchu aktywny przez", "float", 10.0,
+          "Po ostatnim wykryciu czujnik wraca do „brak ruchu” po tylu sekundach.", min=2, max=600, unit="s"),
+        F("_homekit", "Akcesoria", "homekit", None, ""),
+    ]},
     {"id": "go2rtc", "title": "Strumienie (go2rtc)",
      "desc": "go2rtc łączy się z każdą kamerą raz na strumień i udostępnia obraz lokalnie analizie, nagrywaniu "
              "i innym programom. Bez niego każdy proces łączy się z kamerą osobno.",
@@ -213,7 +229,7 @@ _URL_PW = re.compile(r"^([a-zA-Z][\w+.-]*://[^:/@\s]*:)([^/\s]*)(@)")   # hasło
 def form_fields():
     for grp in FORM:
         for f in grp["fields"]:
-            if f["type"] != "models":                 # lista modeli – widżet panelu, nie klucz pliku
+            if f["type"] not in ("models", "homekit"):  # widżety panelu, nie klucze pliku
                 yield grp.get("section", grp["id"]), f
 
 
@@ -251,6 +267,9 @@ def config_view(path):
                      "url": mask_secret_url(str(c.get("url", ""))),
                      "analysis_url": mask_secret_url(str(c.get("analysis_url", ""))),
                      "shinobi_monitor": str(c.get("shinobi_monitor", "")),
+                     "homekit": c.get("homekit", False) is True,
+                     "homekit_motion": [str(x) for x in c.get("homekit_motion", []) if isinstance(x, str)]
+                     if isinstance(c.get("homekit_motion", []), list) else [],
                      "has_zone": bool(c.get("zone")), "has_crop": bool(c.get("crop"))})
     return {"form": FORM, "coco": COCO, "values": vals, "secrets": secrets, "cameras": cams,
             "version": config_version(text)}
@@ -391,6 +410,10 @@ def plan_config(path, body):
                 v = c.get(k)
                 if k in ("enabled", "record"):
                     v = v is not False
+                elif k == "homekit":
+                    v = v is True
+                elif k == "homekit_motion":
+                    v = [str(x) for x in (v or []) if str(x) in COCO]
                 else:
                     v = str(v or "").strip()
                     if "\n" in v:
@@ -403,7 +426,8 @@ def plan_config(path, body):
                     raise ValueError(f"{name}: katalog nagrań musi być pełną ścieżką (np. /srv/…)")
                 if k == "url" and not v:
                     raise ValueError(f"{name}: brak adresu strumienia głównego")
-                prev = oc.get(k, True if k in ("enabled", "record") else "") if orig else None
+                prev = oc.get(k, {"enabled": True, "record": True, "homekit": False, "homekit_motion": []}.get(k, "")) \
+                    if orig else None
                 if orig is None or prev != v:
                     entry[k] = v
                     if orig is not None:

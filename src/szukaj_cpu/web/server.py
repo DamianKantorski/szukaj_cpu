@@ -29,7 +29,22 @@ REC_HTML = (_HERE / "nagrania.html").read_text(encoding="utf-8")
 LIVE_HTML = (_HERE / "live.html").read_text(encoding="utf-8")
 
 
-def start_http(cfg, cams=(), det=None, gallery=None, g2r=None):
+def homekit_view(hk, cfg):
+    if hk is None:
+        return {"enabled": cfg.hk, "cams": [], "error": None}
+    st = hk.status()
+    for c in st["cams"]:
+        if c.get("uri") and not c.get("paired"):
+            try:
+                import segno
+                c["qr"] = segno.make(c["uri"], error="m").svg_inline(scale=5, border=2, dark="#000", light="#fff")
+            except Exception:
+                c["qr"] = ""
+        c.pop("uri", None)
+    return st
+
+
+def start_http(cfg, cams=(), det=None, gallery=None, g2r=None, hk=None):
     if not cfg.port:
         return
     cams_by_name = {c.name: c for c in cams}
@@ -228,6 +243,8 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None):
                     return self._send(200, player_script(g2r), "text/javascript; charset=utf-8")
                 except OSError as e:
                     return self._send(502, {"error": f"go2rtc niedostępny: {e}"})
+            if u.path == "/api/homekit":
+                return self._send(200, homekit_view(hk, cfg))
             if u.path == "/api/live/info":
                 return self._send(200, live_info(cams, g2r))
             if u.path in ("/admin/nagrania", "/admin/nagrania/"):
@@ -326,6 +343,14 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None):
                     return self._send(200, probe_stream(cfg, str(body.get("url", "")).strip(), body.get("camera")))
                 except (ValueError, OSError, tomllib.TOMLDecodeError) as e:
                     return self._send(400, {"error": str(e)})
+            if u.path == "/api/homekit/reset":
+                try:
+                    if hk is None:
+                        raise ValueError("HomeKit jest wyłączony")
+                    hk.reset(str(body.get("camera", "")))
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
+                return self._send(200, {"ok": True, "restart": True})
             if u.path == "/api/restart":
                 if not under_systemd:
                     return self._send(409, {"error": "restart działa tylko przy uruchomieniu przez systemd"})

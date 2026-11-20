@@ -62,7 +62,8 @@ def toml_set_camera(text, cam_name, values):
     raise KeyError(f"brak bloku [[camera]] o nazwie '{cam_name}'")
 
 
-CAMERA_KEYS = ("name", "url", "analysis_url", "enabled", "record", "record_dir", "shinobi_monitor")
+CAMERA_KEYS = ("name", "url", "analysis_url", "enabled", "record", "record_dir", "shinobi_monitor",
+               "homekit", "homekit_motion")
 
 
 def toml_dump(v):
