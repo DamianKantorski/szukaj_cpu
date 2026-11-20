@@ -16,7 +16,7 @@ import cv2
 
 from ..common import CONFIG_LOCK, START_TIME, STOP, log
 from .models import delete_model, install_zip, models_view
-from .config_form import config_version, config_view, plan_config, probe_stream, save_camera_area, validate_config_text, write_config
+from .config_form import find_record_dirs, config_version, config_view, plan_config, probe_stream, save_camera_area, validate_config_text, write_config
 
 
 _HERE = Path(__file__).resolve().parent
@@ -138,6 +138,11 @@ def start_http(cfg, cams=(), det=None):
                 return self._send(200, ADMIN_HTML, "text/html; charset=utf-8")
             if u.path in ("/admin/config", "/admin/config/"):
                 return self._send(200, CONFIG_HTML, "text/html; charset=utf-8")
+            if u.path == "/api/recdirs":
+                try:
+                    return self._send(200, find_record_dirs(cfg.path))
+                except (OSError, tomllib.TOMLDecodeError) as e:
+                    return self._send(500, {"error": str(e)})
             if u.path == "/api/models":
                 return self._send(200, models_view(cfg, det))
             if u.path == "/api/config":

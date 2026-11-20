@@ -313,7 +313,9 @@ function camCard(c, i) {
     <div class="row"><label>Nagrywanie na dysk</label>
      <div class="ctl"><label class="sw" title="nagrywaj tę kamerę"><input type="checkbox" data-ci="${i}" data-ck="record" ${c.record !== false ? "checked" : ""} ${c._del ? "disabled" : ""}><span></span></label>
      <span class="hint">${c.record !== false ? "nagrywa" : "nie nagrywa"}${cur.values.recording && !cur.values.recording.enabled ? " (nagrywanie wyłączone w zakładce Nagrywanie)" : ""}</span></div>
-     ${c.record_dir ? `<p class="hint">Katalog: <code>${esc(c.record_dir)}</code></p>` : ""}</div>
+     <div class="ctl" style="margin-top:6px"><input class="url" type="text" id="rd_${i}" data-ci="${i}" data-ck="record_dir" value="${esc(c.record_dir || "")}" list="recdirs" placeholder="${esc(c.record_dir_default || "katalog nagrań")}" spellcheck="false"></div>
+     <p class="hint">Katalog nagrań. Puste = jak w Shinobi${c.record_dir_default ? `: <code>${esc(c.record_dir_default)}</code>` : ""}.
+       ${RECDIRS && RECDIRS.length ? `Znalezione katalogi z nagraniami: ${RECDIRS.map(d => `<button type="button" class="link sm" data-rd="${i}" data-path="${esc(d.path)}" title="${d.files} plików, ostatni ${esc(d.newest)}">${esc(d.path.replace(RECROOT, "…"))}</button>`).join(" ")}` : ""}</p></div>
     <details class="wiz" ${!c.orig && !c.url ? "open" : ""}><summary>Kreator adresów RTSP</summary>
      <div class="grid">
       <div><label>Producent</label><select id="w_v_${i}">${Object.entries(VENDORS).map(([k, v]) => `<option value="${k}" ${k === (p.vendor || "dahua") ? "selected" : ""}>${v.name}</option>`).join("")}</select></div>
@@ -327,6 +329,15 @@ function camCard(c, i) {
      <div style="padding-bottom:12px"><button type="button" class="sm pri" data-wiz="${i}">Wstaw adresy</button></div>
     </details>
    </div></div>`;
+}
+let RECDIRS = null, RECROOT = "";
+async function loadRecDirs() {
+  try {
+    const j = await api("/api/recdirs"); RECDIRS = j.dirs; RECROOT = j.root;
+    if (!$("recdirs")) document.body.insertAdjacentHTML("beforeend", '<datalist id="recdirs"></datalist>');
+    $("recdirs").innerHTML = RECDIRS.map(d => `<option value="${esc(d.path)}">${d.files} plików</option>`).join("");
+    if ($("p_cameras")) renderCams();
+  } catch (e) { RECDIRS = []; }
 }
 function renderCams() {
   $("p_cameras").innerHTML = `<h2>Kamery</h2><p class="desc">Strumienie kamer. Strefę i przycięcie obrazu ustawisz w zakładce <a href="/admin/">Obszar detekcji</a>.</p>` +
@@ -346,6 +357,9 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("click", async e => {
   const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.rd !== undefined) {
+    const i = Number(b.dataset.rd); cur.cameras[i].record_dir = b.dataset.path; $("rd_" + i).value = b.dataset.path; changed();
+  }
   if (b.dataset.del !== undefined) {
     const i = Number(b.dataset.del), c = cur.cameras[i];
     if (!c.orig) cur.cameras.splice(i, 1); else c._del = !c._del;
@@ -391,7 +405,7 @@ document.addEventListener("click", async e => {
 /* ───── stan i zapis ───── */
 function payload() {
   return {values: cur.values, clear: cur.clear, version,
-          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, record: c.record !== false, url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
+          cameras: cur.cameras.filter(c => !c._del).map(c => ({orig: c.orig, name: c.name, enabled: c.enabled, record: c.record !== false, record_dir: c.record_dir || "", url: c.url, analysis_url: c.analysis_url, shinobi_monitor: c.shinobi_monitor}))};
 }
 function diffCount() {
   const n = {};
@@ -408,7 +422,7 @@ function diffCount() {
   let k = 0;
   cur.cameras.forEach((c, i) => {
     const o = orig.cameras.find(x => x.orig === c.orig && c.orig);
-    const ch = !o || c._del || ["name", "enabled", "record", "url", "analysis_url", "shinobi_monitor"].some(x => c[x] !== o[x]);
+    const ch = !o || c._del || ["name", "enabled", "record", "record_dir", "url", "analysis_url", "shinobi_monitor"].some(x => (c[x] ?? "") !== (o[x] ?? ""));
     const el = $("cam_" + i); if (el) el.classList.toggle("chg", ch);
     if (ch) k++;
   });
@@ -592,6 +606,7 @@ async function load(keepView) {
   orig = {values: j.values, cameras: j.cameras, clear: {}}; cur = clone(orig);
   if (!$("coco")) document.body.insertAdjacentHTML("beforeend", `<datalist id="coco">${COCO.map(c => `<option value="${c}">`).join("")}</datalist>`);
   buildMenu(); renderAll();
+  if (RECDIRS === null) loadRecDirs();
 }
 load().catch(e => { $("panes").innerHTML = `<div class="box e">Nie udało się wczytać konfiguracji: ${esc(e.message)}</div>`; });
 </script></body></html>

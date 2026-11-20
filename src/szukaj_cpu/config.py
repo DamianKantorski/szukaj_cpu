@@ -66,6 +66,20 @@ def tool_version(binary):
         return "?"
 
 
+def default_record_dir(root, group, monitor, name):
+    """Katalog nagrań kamery jak w Shinobi: <katalog wideo>/<klucz grupy>/<ID monitora>.
+    [paths] recordings może wskazywać katalog wideo Shinobi albo już katalog grupy –
+    wtedy klucz grupy nie jest dodawany drugi raz."""
+    if root is None:
+        return None
+    root = Path(root)
+    if group and monitor:
+        if root.name == group or (not (root / group).is_dir() and (root / monitor).is_dir()):
+            return root / monitor
+        return root / group / monitor
+    return root / (monitor or name)
+
+
 def check_crop(box):
     """Prostokąt analizy [x1, y1, x2, y2] (0–1); [] = cały kadr. ValueError przy błędzie."""
     if not box:
@@ -260,14 +274,18 @@ def load_config(path):
         if not isinstance(record, bool):
             sys.exit(f"{where}: record must be true or false")
         rdir = expand(str(cam.get("record_dir", "")).strip())
-        if rdir is None and c.nagrania is not None:
-            # jak w Shinobi: <nagrania>/<klucz grupy>/<ID monitora>; bez nich <nagrania>/<nazwa>
-            rdir = c.nagrania / c.sh_group / monitor if (c.sh_group and monitor) else c.nagrania / name
+        if rdir is None:
+            rdir = default_record_dir(c.nagrania, c.sh_group, monitor, name)
         c.cams.append(SimpleNamespace(name=name, url=url, zone=parse_zone(cam.get("zone", []), where),
                                       monitor=monitor,
                                       analysis_url=str(cam.get("analysis_url", "")).strip(),
                                       crop=parse_crop(cam.get("crop", []), where),
                                       record=record and c.rec, record_dir=rdir))
+    rdirs = [str(x.record_dir) for x in c.cams if x.record and x.record_dir]
+    dup = {d for d in rdirs if rdirs.count(d) > 1}
+    if dup:
+        sys.exit(f"{path}: two cameras record to the same directory {', '.join(sorted(dup))} – set record_dir "
+                 f"or a different shinobi_monitor")
     if not c.cams:
         sys.exit(f"{path}: no cameras configured – fill in url in the [[camera]] blocks")
     return c

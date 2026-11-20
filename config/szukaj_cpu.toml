@@ -178,7 +178,9 @@ repeat_seconds = 30
 # Continuous recording of the main stream to disk (replaces Shinobi), stream copy –
 # no re-encoding. Files go where Shinobi kept them:
 #   <[paths] recordings>/<[shinobi] group_key>/<camera shinobi_monitor>/2026-11-19T17-30-00.mp4
-# (without group key / monitor ID: <recordings>/<camera name>/). Per camera: record, record_dir.
+# (without group key / monitor ID: <recordings>/<camera name>/). If `recordings` already is
+# the group directory (…/videos/<group_key>), the key is not added again. Per camera:
+# record, record_dir (own directory – also settable in the web panel, Cameras).
 # The service user must be able to write there (Shinobi dirs: sudo chown -R USER: DIR).
 enabled = false
 # Length of one file in minutes; files start on full clock minutes

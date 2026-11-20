@@ -9,8 +9,8 @@ import time
 import tomllib
 from pathlib import Path
 
-from ..common import COCO80, CONFIG_LOCK, log, mask_url
-from ..config import check_crop, check_zone, load_config
+from ..common import COCO80, CONFIG_LOCK, NAME_DATE, expand, log, mask_url
+from ..config import check_crop, check_zone, default_record_dir, load_config
 from .toml_edit import CAMERA_KEYS, toml_apply, toml_set_camera, toml_value
 
 
@@ -237,17 +237,42 @@ def config_view(path):
     for i, c in enumerate(data.get("camera", []) if isinstance(data.get("camera"), list) else [], 1):
         name = re.sub(r"[^\w-]", "_", str(c.get("name", f"camera{i}")).strip()) or f"camera{i}"
         mon = str(c.get("shinobi_monitor", "")).strip()
-        rdir = str(c.get("record_dir", "")).strip() or (
-            "/".join(x for x in (rec_root.rstrip("/"), group, mon) if x) if (rec_root and group and mon)
-            else (f"{rec_root.rstrip('/')}/{name}" if rec_root else ""))
+        dflt = default_record_dir(expand(rec_root), group, mon, name)
         cams.append({"orig": name, "name": str(c.get("name", name)), "enabled": c.get("enabled", True) is True,
-                     "record": c.get("record", True) is True, "record_dir": rdir,
+                     "record": c.get("record", True) is True, "record_dir": str(c.get("record_dir", "")).strip(),
+                     "record_dir_default": str(dflt) if dflt else "",
                      "url": mask_secret_url(str(c.get("url", ""))),
                      "analysis_url": mask_secret_url(str(c.get("analysis_url", ""))),
                      "shinobi_monitor": str(c.get("shinobi_monitor", "")),
                      "has_zone": bool(c.get("zone")), "has_crop": bool(c.get("crop"))})
     return {"form": FORM, "coco": COCO, "values": vals, "secrets": secrets, "cameras": cams,
             "version": config_version(text)}
+
+
+def find_record_dirs(path):
+    """Katalogi z nagraniami w stylu Shinobi (RRRR-MM-DDTGG-MM-SS.mp4) pod [paths] recordings – podpowiedzi
+    do ustawienia katalogu nagrań kamery w panelu."""
+    data = tomllib.loads(Path(path).read_text(encoding="utf-8"))
+    root = expand(str((data.get("paths") or {}).get("recordings", "")).strip())
+    if root is None or not root.is_dir():
+        return {"root": str(root) if root else "", "dirs": []}
+    out, seen = [], 0
+    stack = [(root, 0)]
+    while stack and seen < 2000:
+        d, depth = stack.pop()
+        seen += 1
+        try:
+            entries = list(os.scandir(d))
+        except OSError:
+            continue
+        mp4 = [e for e in entries if e.is_file() and NAME_DATE.search(e.name) and e.name.endswith(".mp4")]
+        if mp4:
+            newest = max(mp4, key=lambda e: e.name)
+            out.append({"path": str(d), "files": len(mp4), "newest": newest.name})
+        if depth < 3:
+            stack += [(Path(e.path), depth + 1) for e in entries
+                      if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")]
+    return {"root": str(root), "dirs": sorted(out, key=lambda x: x["path"])}
 
 
 def config_version(text):
@@ -367,6 +392,8 @@ def plan_config(path, body):
                     if v and not re.match(r"^(rtsps?|https?|file)://|^/", v):
                         raise ValueError(f"{name}: adres musi zaczynać się od rtsp://")
                     v = _restore_pw(v, olds) if v else v
+                if k == "record_dir" and v and not (v.startswith("/") or v.startswith("~")):
+                    raise ValueError(f"{name}: katalog nagrań musi być pełną ścieżką (np. /srv/…)")
                 if k == "url" and not v:
                     raise ValueError(f"{name}: brak adresu strumienia głównego")
                 prev = oc.get(k, True if k in ("enabled", "record") else "") if orig else None
