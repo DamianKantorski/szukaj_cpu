@@ -92,6 +92,8 @@ try {
 class LiveView extends VideoRTC {
   oninit() {
     super.oninit();
+    // dźwięk tylko jako AAC (go2rtc przekoduje G.711/L16 przez ffmpeg) – FLAC/Opus nie działają w Safari/iOS
+    this.CODECS = this.CODECS.filter(c => c !== "flac" && c !== "opus");
     this.video.controls = false;
     this.video.muted = true;
     this.video.addEventListener("playing", () => this.status(""));

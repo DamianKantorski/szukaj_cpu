@@ -120,7 +120,7 @@ inside() {
         --enable-libjxl \
         --enable-protocol=file,pipe,tcp,udp,rtp \
         --enable-demuxer=rtsp,sdp,rtp,mov,mpegts,matroska,concat,rawvideo,h264,hevc,mjpeg,image2 \
-        --enable-muxer=rawvideo,segment,mpegts,mp4,mov,matroska,image2,null \
+        --enable-muxer=rawvideo,segment,mpegts,mp4,mov,matroska,image2,null,rtsp,rtp,adts \
         --enable-decoder=h264,hevc,mjpeg,rawvideo,libjxl,aac,pcm_mulaw,pcm_alaw,pcm_s16be,pcm_s16le,pcm_s24be,pcm_u8,adpcm_g726,adpcm_g726le,adpcm_g722,opus,mp3float \
         --enable-encoder=rawvideo,wrapped_avframe,libjxl,aac \
         --enable-parser=h264,hevc,mjpeg,aac,opus \

@@ -43,6 +43,7 @@ class Go2rtc:
         self.err = []
         self.conf = CONF_DIR / "go2rtc.yaml"
         self.host = "127.0.0.1"
+        self.audio = {}             # strumień -> kodek dźwięku ("" = brak)
 
     def local_url(self, stream):
         return f"rtsp://{self.host}:{self.cfg.g2r_rtsp}/{stream}"
@@ -51,9 +52,9 @@ class Go2rtc:
         streams = {}
         for cam in self.cams:
             main, sub = stream_names(cam)
-            streams[main] = cam.src_url
+            streams[main] = self._sources(main, cam.src_url)
             if self._sub(cam):
-                streams[sub] = cam.src_analysis
+                streams[sub] = self._sources(sub, cam.src_analysis)
         conf = {
             "api": {"listen": f"127.0.0.1:{self.cfg.g2r_api}"},
             "rtsp": {"listen": f"{self.cfg.g2r_listen}:{self.cfg.g2r_rtsp}"},
@@ -69,6 +70,56 @@ class Go2rtc:
         with os.fdopen(fd, "w") as f:
             json.dump(conf, f, indent=1)
         tmp.replace(self.conf)
+
+    def _sources(self, name, url):
+        """Źródło kamery, a gdy ma dźwięk inny niż AAC – drugie źródło z dźwiękiem przekodowanym na AAC.
+        go2rtc uruchamia ten ffmpeg tylko na żądanie (podgląd w Safari/iOS, który nie odtwarza PCM/G.711
+        jako FLAC). Bez dźwięku w kamerze NIE dodajemy go – go2rtc próbowałby go uruchamiać na próżno."""
+        a = self.audio.get(name)
+        return [url, f"ffmpeg:{name}#audio=aac"] if a and a != "aac" else url
+
+    def probe_audio(self):
+        """Kodek dźwięku każdego strumienia (ffprobe, równolegle, max ~8 s); wynik zapamiętany na wypadek,
+        gdyby kamera była chwilowo niedostępna przy starcie."""
+        cache = CONF_DIR / "go2rtc_audio.json"
+        try:
+            old = json.loads(cache.read_text())
+        except (OSError, ValueError):
+            old = {}
+        jobs = {}
+        for cam in self.cams:
+            main, sub = stream_names(cam)
+            jobs[main] = cam.src_url
+            if self._sub(cam):
+                jobs[sub] = cam.src_analysis
+        res = {}
+
+        def one(name, url):
+            try:
+                r = subprocess.run([str(self.cfg.ffprobe), "-v", "error", "-rtsp_transport", "tcp", "-timeout", "6000000",
+                                    "-show_entries", "stream=codec_type,codec_name", "-of", "json", url],
+                                   capture_output=True, text=True, timeout=10)
+                streams = json.loads(r.stdout or "{}").get("streams", [])
+                if r.returncode == 0 and streams:
+                    res[name] = next((st.get("codec_name", "?") for st in streams if st.get("codec_type") == "audio"), "")
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+
+        ths = [threading.Thread(target=one, args=kv, daemon=True) for kv in jobs.items()]
+        for t in ths:
+            t.start()
+        for t in ths:
+            t.join(12)
+        self.audio = {k: res.get(k, old.get(k, "")) for k in jobs}
+        if res:
+            try:
+                cache.write_text(json.dumps(self.audio))
+            except OSError:
+                pass
+        aac = [k for k, v in self.audio.items() if v and v != "aac"]
+        if aac:
+            log.info("go2rtc: dźwięk dla podglądu przekodowywany na AAC (na żądanie): %s",
+                     ", ".join(f"{k} ({self.audio[k]})" for k in aac))
 
     @staticmethod
     def _sub(cam):
@@ -99,6 +150,7 @@ class Go2rtc:
             log.warning("go2rtc: nie znaleziono programu (pakiet: /opt/szukaj_cpu/go2rtc) – kamery łączą się "
                         "bezpośrednio, każdy proces osobno")
             return False
+        self.probe_audio()
         self.write_config()
         self._spawn()
         for _ in range(50):
