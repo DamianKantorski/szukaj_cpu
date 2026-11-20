@@ -45,6 +45,15 @@ def check_writable(d):
         return str(e)
 
 
+def has_encoder(ffmpeg, name):
+    try:
+        out = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True,
+                             text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(len(f := ln.split()) > 1 and f[1] == name for ln in out.splitlines())
+
+
 class Recorder:
     def __init__(self, cfg, cams):
         self.cfg = cfg
@@ -54,6 +63,10 @@ class Recorder:
 
     def check(self):
         """Przed startem: katalogi zapisywalne? Kamery bez dostępu nie nagrywają (z jasnym komunikatem)."""
+        if self.cams and self.cfg.rec_audio and not has_encoder(self.cfg.ffmpeg, "aac"):
+            log.warning("nagrywanie: %s nie ma kodera AAC – zapis bez dźwięku "
+                        "(zaktualizuj ffmpeg albo usuń stary z ~/.szukaj_cpu/)", self.cfg.ffmpeg)
+            self.cfg.rec_audio = False
         for cam in self.cams:
             err = check_writable(cam.staging)
             if err:

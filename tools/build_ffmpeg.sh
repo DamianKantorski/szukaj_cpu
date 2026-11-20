@@ -115,17 +115,17 @@ inside() {
         --disable-autodetect --disable-everything \
         --disable-doc --disable-debug --disable-ffplay \
         --enable-ffmpeg --enable-ffprobe --enable-network \
-        --enable-avcodec --enable-avformat --enable-avfilter --enable-swscale \
+        --enable-avcodec --enable-avformat --enable-avfilter --enable-swscale --enable-swresample \
         "${VAAPI[@]}" \
         --enable-libjxl \
         --enable-protocol=file,pipe,tcp,udp,rtp \
         --enable-demuxer=rtsp,sdp,rtp,mov,mpegts,matroska,concat,rawvideo,h264,hevc,mjpeg,image2 \
         --enable-muxer=rawvideo,segment,mpegts,mp4,mov,matroska,image2,null \
-        --enable-decoder=h264,hevc,mjpeg,rawvideo,libjxl \
-        --enable-encoder=rawvideo,wrapped_avframe,libjxl \
-        --enable-parser=h264,hevc,mjpeg \
-        --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata,dump_extradata,null \
-        --enable-filter=scale,select,fps,format,null,copy,setpts,trim \
+        --enable-decoder=h264,hevc,mjpeg,rawvideo,libjxl,aac,pcm_mulaw,pcm_alaw,adpcm_g726,adpcm_g726le,opus \
+        --enable-encoder=rawvideo,wrapped_avframe,libjxl,aac \
+        --enable-parser=h264,hevc,mjpeg,aac,opus \
+        --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,aac_adtstoasc,extract_extradata,dump_extradata,null \
+        --enable-filter=scale,select,fps,format,null,copy,setpts,trim,aresample,aformat,anull,asetpts \
         > "$SRC/configure.log" 2>&1 || { tail -40 "$SRC/configure.log"; tail -60 ffbuild/config.log; exit 1; }
     make -j "$JOBS" ffmpeg ffprobe > "$SRC/make.log" 2>&1 || { grep -E "error|Error" "$SRC/make.log" | tail -30; exit 1; }
     strip ffmpeg ffprobe

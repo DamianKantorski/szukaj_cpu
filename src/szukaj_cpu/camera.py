@@ -288,6 +288,7 @@ class Camera:
             proc = subprocess.Popen(build_rec_cmd(self.cfg, self), stdout=subprocess.DEVNULL,
                                     stderr=subprocess.PIPE)
             self.rec_proc = proc
+            self.rec_started = started
             for line in proc.stderr:
                 self.rec_err.append(line.decode(errors="replace").strip())
             proc.wait()
@@ -317,7 +318,9 @@ class Camera:
                     limit = max(self.cfg.watchdog, 60)        # fragmenty MP4 dopisywane co klatkę kluczową
             except OSError:
                 newest, limit = now, 1
-            if newest and now - newest > limit:
+            # proces, który od startu nic nie zapisał (np. zawieszone połączenie) też restartuj
+            newest = max(newest, getattr(self, "rec_started", now))
+            if now - newest > limit:
                 log.warning("[%s] zapis strumienia głównego nie rośnie od %.0f s – restart", self.name, now - newest)
                 r.terminate()
 

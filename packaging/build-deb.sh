@@ -183,7 +183,9 @@ fi
 # ── 3. ffmpeg / ffprobe skompilowane lokalnie ──
 FF="$B/ffmpeg"
 if [ "$DO_FFMPEG" = 1 ]; then
-    if [ "$RB_FFMPEG" = 1 ] || [ ! -x "$FF/ffmpeg" ] || [ ! -x "$FF/ffprobe" ]; then
+    FF_STAMP="$(sha256sum "$ROOT/tools/build_ffmpeg.sh" | cut -c1-16)"   # zmiana skryptu -> przebudowa
+    if [ "$RB_FFMPEG" = 1 ] || [ ! -x "$FF/ffmpeg" ] || [ ! -x "$FF/ffprobe" ] \
+       || [ "$(cat "$FF/.stamp" 2>/dev/null)" != "$FF_STAMP" ]; then
         echo "==> ffmpeg (-march=$MARCH) – kompilacja, kilka–kilkanaście minut"
         rm -rf "$FF"
         if [ "$INSIDE" = 1 ]; then
@@ -191,6 +193,7 @@ if [ "$DO_FFMPEG" = 1 ]; then
         else
             NATIVE=1 bash "$ROOT/tools/build_ffmpeg.sh" "$FF"
         fi
+        echo "$FF_STAMP" > "$FF/.stamp"
     fi
     echo "    $("$FF/ffmpeg" -hide_banner -version | head -1)"
 fi
