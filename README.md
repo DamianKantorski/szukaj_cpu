@@ -63,7 +63,8 @@ src/szukaj_cpu/
   clips.py     clips and full-resolution frames from the main stream
   notify.py    ntfy and Shinobi
   main.py      arguments, main loop, --test, --init
-  web/         web server, detection-area page (area.html), configurator (config.html),
+  web/         web server, detection-area page (area.html), recordings (nagrania.html,
+               recordings.py), configurator (config.html),
                TOML editing, model upload
 tools/         build_ffmpeg.sh, export_models.py, compare_models.py, test_przerwy.py
 packaging/     build-deb.sh, debian/ maintainer scripts
@@ -178,7 +179,7 @@ departure and movement still raise events. The list survives restarts
 
 Since 1.9 szukaj_cpu can record continuously and needs only one connection per camera
 stream. It is the first step to replacing Shinobi (and Home Assistant for HomeKit); a
-recordings page with a timeline, live view in the browser and HomeKit follow.
+live view in the browser and HomeKit follow.
 
 * **go2rtc** (bundled, `[go2rtc]`) connects to each camera stream once and restreams it
   locally – `rtsp://127.0.0.1:8554/<camera>` and `/<camera>_sub`. Detection, the clip buffer
@@ -195,6 +196,19 @@ recordings page with a timeline, live view in the browser and HomeKit follow.
   directories included).
 * The service user must be able to write to the Shinobi directories:
   `sudo chown -R $USER: /path/to/videos/GROUP_KEY` – the log says so when it cannot.
+* Audio is recorded as AAC (`[recording] audio = true`). The bundled ffmpeg decodes AAC,
+  G.711 (PCMU/PCMA), L16 (Dahua), G.726, G.722, Opus and MP3 from the camera.
+
+### Recordings page (`/admin/nagrania`)
+
+Requires the panel login. For a chosen day it shows a timeline per camera: blue bars are
+recording files, green is the file being written now, orange marks are detected people
+(events from the gallery). Click the timeline to play from that moment; playback continues
+into the next file. Zoom 24 h / 6 h / 1 h, speed 1×–16×, ±10 s, jump to previous/next
+event, download the current file. Keys: space – play/pause, ←/→ – 10 s, `,`/`.` – events.
+Each gallery entry has a **nagranie** link that opens the page at that event. Old Shinobi
+recordings in the same directories are shown too. Files are served at
+`/rec/<camera>/<file>` with HTTP Range (seeking), only for the cameras' recording directories.
 
 ## Models: YOLO11 / YOLO26, FP32 / INT8
 

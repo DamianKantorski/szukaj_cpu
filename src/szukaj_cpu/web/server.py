@@ -16,15 +16,17 @@ import cv2
 
 from ..common import CONFIG_LOCK, START_TIME, STOP, log
 from .models import delete_model, install_zip, models_view
+from .recordings import day_view, days_view, resolve_file, send_file
 from .config_form import find_record_dirs, config_version, config_view, plan_config, probe_stream, save_camera_area, validate_config_text, write_config
 
 
 _HERE = Path(__file__).resolve().parent
 ADMIN_HTML = (_HERE / "area.html").read_text(encoding="utf-8")
 CONFIG_HTML = (_HERE / "config.html").read_text(encoding="utf-8")
+REC_HTML = (_HERE / "nagrania.html").read_text(encoding="utf-8")
 
 
-def start_http(cfg, cams=(), det=None):
+def start_http(cfg, cams=(), det=None, gallery=None):
     if not cfg.port:
         return
     cams_by_name = {c.name: c for c in cams}
@@ -118,13 +120,30 @@ def start_http(cfg, cams=(), det=None):
                 threading.Timer(0.5, STOP.set).start()
 
         def do_HEAD(self):
-            if not self._gate():
-                super().do_HEAD()
+            if self._gate():
+                return
+            if urllib.parse.urlparse(self.path).path.startswith("/rec/"):
+                return self._rec_file()
+            super().do_HEAD()
+
+        def _rec_file(self):
+            u = urllib.parse.urlparse(self.path)
+            if not admin_on:
+                return self._send(403, {"error": "nagrania dostępne tylko z włączonym logowaniem panelu"})
+            parts = u.path.split("/")
+            if len(parts) != 4:
+                return self._send(404, {"error": "nie ma takiego nagrania"})
+            p = resolve_file(cams, urllib.parse.unquote(parts[2]), urllib.parse.unquote(parts[3]))
+            if p is None:
+                return self._send(404, {"error": "nie ma takiego nagrania"})
+            send_file(self, p, download="dl=1" in u.query)
 
         def do_GET(self):
             if self._gate():
                 return
             u = urllib.parse.urlparse(self.path)
+            if u.path.startswith("/rec/"):
+                return self._rec_file()
             if not (u.path.startswith("/admin") or u.path.startswith("/api/")):
                 return super().do_GET()
             if not admin_on:
@@ -138,6 +157,16 @@ def start_http(cfg, cams=(), det=None):
                 return self._send(200, ADMIN_HTML, "text/html; charset=utf-8")
             if u.path in ("/admin/config", "/admin/config/"):
                 return self._send(200, CONFIG_HTML, "text/html; charset=utf-8")
+            if u.path in ("/admin/nagrania", "/admin/nagrania/"):
+                return self._send(200, REC_HTML, "text/html; charset=utf-8")
+            if u.path == "/api/rec/days":
+                return self._send(200, days_view(cams, gallery))
+            if u.path == "/api/rec/day":
+                try:
+                    return self._send(200, day_view(cfg, cams, gallery,
+                                                    urllib.parse.parse_qs(u.query).get("date", [""])[0]))
+                except ValueError as e:
+                    return self._send(400, {"error": str(e)})
             if u.path == "/api/recdirs":
                 try:
                     return self._send(200, find_record_dirs(cfg.path))
@@ -238,5 +267,5 @@ def start_http(cfg, cams=(), det=None):
                               functools.partial(Handler, directory=str(cfg.galeria)))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("Galeria WWW: http://<adres-serwera>:%d/%s", cfg.port,
-             "  (panel ustawień: /admin/ i /admin/config, logowanie)" if admin_on
+             "  (panel: /admin/, /admin/nagrania, /admin/config – logowanie)" if admin_on
              else "  (panel /admin/ wyłączony – ustaw http_user i http_password)")

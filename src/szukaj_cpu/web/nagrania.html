@@ -1,0 +1,408 @@
+<!doctype html><html lang="pl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nagrania – szukaj_cpu</title>
+<style>
+:root{--bg:#111;--card:#1b1d22;--fg:#e6e6e6;--mut:#9aa0a6;--line:#2c2f36;--acc:#4ea1ff;--seg:#2f5a8f;--live:#2f8f6a;--ev:#ff9f2e;--head:#ff4d4d;--ok:#4cc38a;--err:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,sans-serif}
+main{max-width:1200px;margin:0 auto;padding:14px 16px 40px}
+a{color:var(--acc)}
+header.top{border-bottom:1px solid var(--line)}
+.topin{max-width:1200px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.brand{font-weight:700;font-size:16px;margin-right:6px}
+nav.tabs{display:flex;gap:4px;flex-wrap:wrap}
+nav.tabs a{padding:6px 12px;border-radius:8px;text-decoration:none;color:var(--mut);border:1px solid transparent}
+nav.tabs a.on{color:var(--fg);background:var(--card);border-color:var(--line)}
+nav.tabs a:hover{color:var(--fg)}.gal{margin-left:auto;font-size:14px}
+@media(max-width:820px){.gal{margin-left:0}}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:8px 0}
+.bar .sp{flex:1}
+select,button,input{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px 11px}
+button{cursor:pointer}button:hover{border-color:#4a4f58}button:disabled{opacity:.45;cursor:default}
+button.on{border-color:var(--acc);box-shadow:inset 0 0 0 1px var(--acc)}
+input[type=date]{color-scheme:dark}
+.grp{display:inline-flex}.grp button{border-radius:0;margin-left:-1px}.grp button:first-child{border-radius:8px 0 0 8px;margin-left:0}
+.grp button:last-child{border-radius:0 8px 8px 0}
+.player{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:16/9;max-height:68vh;margin:0 auto}
+.player video{width:100%;height:100%;display:block;background:#000}
+.player .ov{position:absolute;left:10px;top:8px;background:rgba(0,0,0,.55);padding:3px 9px;border-radius:6px;font:600 14px/1.4 ui-monospace,monospace;pointer-events:none}
+.player .empty[hidden],.player .ov[hidden]{display:none}
+.player .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--mut);text-align:center;padding:20px}
+.tl{background:var(--card);border:1px solid var(--line);border-radius:10px;margin-top:10px;padding:8px 0 6px;user-select:none}
+.tlrow{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center}
+.tlrow .lab{padding:0 10px;font-size:13px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+.tlrow .lab.on{color:var(--fg);font-weight:600}
+.scroll{overflow-x:auto;overflow-y:hidden;grid-column:2;grid-row:1/span 99;scrollbar-width:thin}
+.inner{position:relative;min-width:100%}
+.ticks{position:relative;height:20px;font-size:11px;color:var(--mut)}
+.ticks span{position:absolute;top:2px;transform:translateX(-50%);white-space:nowrap}
+.ticks i{position:absolute;bottom:0;width:1px;height:5px;background:#555}
+.track{position:relative;height:34px;margin:4px 0;background:#121418;border-top:1px solid #1c1f24;border-bottom:1px solid #1c1f24;cursor:pointer}
+.track.on{background:#151a22}
+.seg{position:absolute;top:12px;bottom:5px;background:var(--seg);border-radius:2px}
+.seg.live{background:var(--live)}
+.ev{position:absolute;top:2px;height:8px;min-width:3px;background:var(--ev);border-radius:2px;cursor:pointer}
+.ev.cur{outline:2px solid #fff}
+.ticks span.first{transform:none}
+.head{position:absolute;top:0;bottom:0;width:2px;background:var(--head);pointer-events:none;z-index:3;display:none}
+.now{position:absolute;top:0;bottom:0;width:1px;background:#888;pointer-events:none;z-index:2;border-left:1px dashed #aaa}
+.hover{position:absolute;top:-2px;transform:translateX(-50%);background:#000;color:#fff;font-size:11px;padding:1px 5px;border-radius:4px;pointer-events:none;z-index:4;display:none;white-space:nowrap}
+.labs{display:flex;flex-direction:column}
+.labs .sp20{height:20px}.labs .lab{height:34px;margin:4px 0;display:flex;align-items:center}
+.leg{display:inline-flex;align-items:center;gap:6px;color:var(--mut);font-size:12.5px;margin-right:10px}
+.leg i{display:inline-block;width:14px;height:8px;border-radius:2px}
+.info{font-size:13px;color:var(--mut);min-height:1.3em;margin-top:6px}
+h2{font-size:16px;margin:22px 0 8px}
+.evs{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.evc{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer}
+.evc:hover{border-color:#4a4f58}.evc.cur{border-color:var(--ev)}
+.evc img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#000}
+.evc div{padding:6px 8px;font-size:12.5px;color:#c9ccd1}.evc b{color:var(--fg)}
+.evc a{font-size:12px}
+.err{color:var(--err)}
+@media(max-width:600px){.evs{grid-template-columns:1fr 1fr}.tlrow{grid-template-columns:64px minmax(0,1fr)}.tlrow .lab{font-size:12px;padding:0 6px}}
+</style></head><body>
+<header class="top"><div class="topin">
+ <span class="brand">szukaj_cpu</span>
+ <nav class="tabs"><a href="/admin/nagrania" class="on">Nagrania</a><a href="/admin/">Obszar detekcji</a><a href="/admin/config">Konfiguracja</a></nav>
+ <a class="gal" href="/">← galeria</a>
+</div></header><main>
+<div class="bar">
+  <button id="prevDay" title="Poprzedni dzień">◀</button>
+  <input type="date" id="day">
+  <button id="nextDay" title="Następny dzień">▶</button>
+  <button id="today">Dziś</button>
+  <select id="cam" title="Kamera"></select>
+  <span class="sp"></span>
+  <span class="grp" id="zoom"><button data-z="1" class="on">24 h</button><button data-z="4">6 h</button><button data-z="24">1 h</button></span>
+</div>
+
+<div class="player" id="player">
+  <video id="v" controls playsinline preload="metadata"></video>
+  <div class="ov" id="ov" hidden></div>
+  <div class="empty" id="empty">Kliknij na osi czasu albo wybierz zdarzenie poniżej.</div>
+</div>
+
+<div class="bar">
+  <button id="back" title="10 s wstecz (←)">−10 s</button>
+  <button id="play" title="Odtwórz / pauza (spacja)">▶︎ / ❚❚</button>
+  <button id="fwd" title="10 s dalej (→)">+10 s</button>
+  <span class="grp" id="speed"><button data-s="1" class="on">1×</button><button data-s="2">2×</button><button data-s="4">4×</button><button data-s="8">8×</button><button data-s="16">16×</button></span>
+  <button id="prevEv" title="Poprzednie zdarzenie (,)">◀ zdarzenie</button>
+  <button id="nextEv" title="Następne zdarzenie (.)">zdarzenie ▶</button>
+  <span class="sp"></span>
+  <a id="dl" href="#" hidden>pobierz plik</a>
+</div>
+
+<div class="tl" id="tl">
+  <div class="tlrow">
+    <div class="labs" id="labs"></div>
+    <div class="scroll" id="scroll"><div class="inner" id="inner"></div></div>
+  </div>
+</div>
+<div class="info" id="info"></div>
+<div class="bar" style="margin-top:2px">
+  <span class="leg"><i style="background:var(--seg)"></i>nagranie</span>
+  <span class="leg"><i style="background:var(--live)"></i>nagrywane teraz</span>
+  <span class="leg"><i style="background:var(--ev)"></i>wykryta osoba</span>
+  <span class="leg"><i style="background:var(--head);width:3px"></i>odtwarzane miejsce</span>
+</div>
+
+<h2 id="evh">Zdarzenia</h2>
+<div class="evs" id="evs"></div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const v = $("v");
+const DAY = 86400;
+let data = null, zoom = 1, cur = null;   // cur = {cam, seg, t0}  (t0 = sekunda doby początku pliku)
+let selCam = null, curEv = -1, pendingSeek = null, refreshTimer = null;
+
+const pad = n => String(n).padStart(2, "0");
+const hms = s => { s = Math.max(0, Math.floor(s)); return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`; };
+const isoDay = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const fileUrl = (cam, f) => `/rec/${encodeURIComponent(cam)}/${encodeURIComponent(f)}`;
+
+function hashGet() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  return {date: h.get("date"), cam: h.get("cam"), t: h.get("t") != null ? +h.get("t") : null};
+}
+function hashSet() {
+  const h = new URLSearchParams();
+  h.set("date", $("day").value);
+  if (selCam) h.set("cam", selCam);
+  if (cur) h.set("t", Math.floor(cur.t0 + (v.currentTime || 0)));
+  history.replaceState(null, "", "#" + h.toString());
+}
+
+async function api(path) {
+  const r = await fetch(path, {headers: {"X-Szukaj": "1"}});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function loadDay(keepPos) {
+  const day = $("day").value;
+  try {
+    data = await api("/api/rec/day?date=" + day);
+  } catch (e) {
+    $("info").innerHTML = `<span class="err">Błąd: ${esc(e.message)}</span>`;
+    return;
+  }
+  const names = data.cams.map(c => c.name);
+  const sel = $("cam");
+  if (sel.options.length !== names.length || [...sel.options].some((o, i) => o.value !== names[i])) {
+    sel.innerHTML = names.map(n => `<option>${esc(n)}</option>`).join("");
+  }
+  if (!names.includes(selCam)) selCam = names[0] || null;
+  sel.value = selCam || "";
+  if (!keepPos) { stop(); curEv = -1; }
+  render();
+  renderEvents();
+  clearTimeout(refreshTimer);
+  if (data.now != null) refreshTimer = setTimeout(() => loadDay(true), 60000);
+  if (!data.cams.length) $("info").textContent = "Żadna kamera nie ma ustawionego katalogu nagrań (Konfiguracja → Nagrywanie).";
+  else {
+    const n = data.cams.reduce((a, c) => a + c.segments.length, 0);
+    $("info").textContent = n ? `${n} plików nagrań, ${data.events.length} zdarzeń tego dnia.` : "Brak nagrań tego dnia.";
+  }
+}
+
+function render() {
+  const inner = $("inner"), labs = $("labs");
+  inner.style.width = (zoom * 100) + "%";
+  const w = ($("scroll").clientWidth || 800) * zoom;            // szerokość osi w px
+  const lstep = [300, 600, 900, 1800, 3600, 7200, 10800, 21600].find(x => x / DAY * w >= 52) || 21600;
+  const step = lstep >= 7200 ? lstep / 2 : lstep >= 1800 ? lstep / 3 : lstep / 2;
+  let ticks = "";
+  for (let s = 0; s <= DAY; s += step) {
+    const x = s / DAY * 100;
+    ticks += `<i style="left:${x}%"></i>`;
+    if (s % lstep === 0 && s < DAY) ticks += `<span ${s === 0 ? 'class="first" ' : ""}style="left:${x}%">${s === 0 ? "00:00" : hms(s).slice(0, 5)}</span>`;
+  }
+  let h = `<div class="ticks">${ticks}</div>`;
+  labs.innerHTML = `<div class="sp20"></div>`;
+  for (const c of data.cams) {
+    labs.innerHTML += `<div class="lab ${c.name === selCam ? "on" : ""}" data-cam="${esc(c.name)}" title="${esc(c.name)}">${esc(c.name)}${c.recording ? "" : " ⏸"}</div>`;
+    let t = `<div class="track ${c.name === selCam ? "on" : ""}" data-cam="${esc(c.name)}">`;
+    for (const s of c.segments) {
+      t += `<div class="seg ${s.live ? "live" : ""}" style="left:${s.start / DAY * 100}%;width:${Math.max(0.02, (s.end - s.start) / DAY * 100)}%"></div>`;
+    }
+    data.events.forEach((e, i) => {
+      if (e.cam !== c.name) return;
+      t += `<div class="ev ${i === curEv ? "cur" : ""}" data-ev="${i}" title="${hms(e.start)}–${hms(e.end)} ${esc(e.objects)}" style="left:${e.start / DAY * 100}%;width:${Math.max(0, (e.end - e.start) / DAY * 100)}%"></div>`;
+    });
+    t += `</div>`;
+    h += t;
+  }
+  if (data.now != null) h += `<div class="now" style="left:${data.now / DAY * 100}%"></div>`;
+  h += `<div class="head" id="head"></div><div class="hover" id="hover"></div>`;
+  inner.innerHTML = h;
+  updateHead(true);
+}
+
+function renderEvents() {
+  const evs = data.events;
+  $("evh").textContent = `Zdarzenia (${evs.length})`;
+  $("evs").innerHTML = evs.length ? evs.map((e, i) => `
+    <div class="evc ${i === curEv ? "cur" : ""}" data-ev="${i}">
+      ${e.thumb ? `<img loading="lazy" src="/${esc(e.thumb)}" alt="">` : ""}
+      <div><b>${hms(e.start)}–${hms(e.end).slice(0)}</b> · ${esc(e.cam)}<br>${esc(e.objects)} · max ${esc(e.count)} · ${esc(e.conf)}
+      ${e.clip ? ` · <a href="/${esc(e.clip)}" target="_blank" onclick="event.stopPropagation()">klip</a>` : ""}
+      ${e.full ? ` · <a href="/${esc(e.full)}" target="_blank" onclick="event.stopPropagation()">klatka</a>` : ""}</div>
+    </div>`).join("") : `<p class="info">Brak zdarzeń tego dnia.</p>`;
+}
+
+function camData(name) { return data && data.cams.find(c => c.name === name); }
+
+// odtwarzanie od sekundy doby t na kamerze cam; w przerwie -> następne nagranie
+function playAt(cam, t, autoplay = true) {
+  const c = camData(cam);
+  if (!c) return;
+  if (selCam !== cam) { selCam = cam; $("cam").value = cam; render(); }
+  let seg = c.segments.find(s => t >= s.start && t < s.end);
+  if (!seg) {
+    seg = c.segments.find(s => s.start > t);
+    if (!seg) { $("info").textContent = `${cam}: brak nagrania po ${hms(t)}.`; return; }
+    $("info").textContent = `${cam}: brak nagrania o ${hms(t)} – odtwarzam od ${hms(seg.start)}.`;
+    t = seg.start;
+  } else $("info").textContent = "";
+  const off = Math.max(0, t - seg.start);
+  if (cur && cur.cam === cam && cur.seg.file === seg.file && !seg.live) {
+    v.currentTime = off;
+    if (autoplay) v.play().catch(() => {});
+    return;
+  }
+  cur = {cam, seg, t0: seg.start};
+  pendingSeek = off;
+  v.src = fileUrl(cam, seg.file) + (seg.live ? "?r=" + Date.now() : "");
+  v.playbackRate = curSpeed();
+  $("empty").hidden = true;
+  $("ov").hidden = false;
+  $("dl").hidden = seg.live;
+  $("dl").href = fileUrl(cam, seg.file) + "?dl=1";
+  if (autoplay) v.play().catch(() => {});
+  updateHead(true);
+}
+
+function stop() {
+  cur = null;
+  v.removeAttribute("src"); v.load();
+  $("empty").hidden = false; $("ov").hidden = true; $("dl").hidden = true;
+  updateHead();
+}
+
+v.addEventListener("loadedmetadata", () => {
+  if (pendingSeek != null) {
+    const s = pendingSeek; pendingSeek = null;
+    if (s > 0.5) v.currentTime = Math.min(s, (v.duration || s) - 0.5);
+  }
+  v.playbackRate = curSpeed();
+});
+v.addEventListener("timeupdate", () => updateHead());
+v.addEventListener("ended", () => {
+  if (!cur) return;
+  const c = camData(cur.cam);
+  const end = cur.t0 + v.currentTime;
+  if (cur.seg.live) {                       // plik nadal rośnie – wczytaj ponownie od tego miejsca
+    const cam = cur.cam; cur = null;
+    setTimeout(() => loadDay(true).then(() => playAt(cam, end)), 2000);
+    return;
+  }
+  const next = c && c.segments.find(s => s.start >= cur.seg.end - 3 && s.file !== cur.seg.file);
+  if (next) playAt(cur.cam, next.start);
+  else $("info").textContent = "Koniec nagrań tego dnia.";
+});
+v.addEventListener("error", () => {
+  if (v.getAttribute("src")) $("info").innerHTML = `<span class="err">Nie można odtworzyć pliku${cur ? " " + esc(cur.seg.file) : ""} (format nieobsługiwany przez przeglądarkę albo plik uszkodzony).</span>`;
+});
+
+let lastHash = 0;
+function updateHead(scrollTo) {
+  const head = $("head"), ov = $("ov");
+  if (!head) return;
+  if (!cur) { head.style.display = "none"; return; }
+  const t = cur.t0 + (v.currentTime || pendingSeek || 0);
+  head.style.display = "block";
+  head.style.left = (t / DAY * 100) + "%";
+  ov.textContent = `${cur.cam} · ${data.date} ${hms(t)}`;
+  const tracks = [...document.querySelectorAll(".track")];
+  const i = data.cams.findIndex(c => c.name === cur.cam);
+  if (tracks[i]) { head.style.top = tracks[i].offsetTop + "px"; head.style.height = tracks[i].offsetHeight + "px"; head.style.bottom = "auto"; }
+  const sc = $("scroll"), x = t / DAY * sc.scrollWidth;
+  if (scrollTo || x < sc.scrollLeft + 20 || x > sc.scrollLeft + sc.clientWidth - 20) {
+    if (zoom > 1) sc.scrollLeft = x - sc.clientWidth / 2;
+  }
+  if (Date.now() - lastHash > 2000) { lastHash = Date.now(); hashSet(); }
+}
+
+function curSpeed() { return +document.querySelector("#speed .on").dataset.s; }
+
+// oś czasu: klik = odtwórz, ruch = podpowiedź godziny
+function timeFromEvent(ev) {
+  const r = $("inner").getBoundingClientRect();
+  return Math.min(DAY - 1, Math.max(0, (ev.clientX - r.left) / r.width * DAY));
+}
+$("inner").addEventListener("click", ev => {
+  const e = ev.target.closest(".ev");
+  if (e) return gotoEvent(+e.dataset.ev);
+  const tr = ev.target.closest(".track");
+  if (!tr) return;
+  playAt(tr.dataset.cam, timeFromEvent(ev));
+});
+$("inner").addEventListener("mousemove", ev => {
+  const hv = $("hover"), tr = ev.target.closest(".track");
+  if (!hv) return;
+  if (!tr) { hv.style.display = "none"; return; }
+  const t = timeFromEvent(ev);
+  hv.textContent = hms(t);
+  hv.style.display = "block";
+  hv.style.left = (t / DAY * 100) + "%";
+  hv.style.top = (tr.offsetTop - 16) + "px";
+});
+$("inner").addEventListener("mouseleave", () => { const hv = $("hover"); if (hv) hv.style.display = "none"; });
+$("labs").addEventListener("click", ev => {
+  const l = ev.target.closest(".lab");
+  if (!l) return;
+  const t = cur ? cur.t0 + v.currentTime : null;
+  selCam = l.dataset.cam; $("cam").value = selCam; render();
+  if (t != null) playAt(selCam, t);
+});
+$("cam").addEventListener("change", () => {
+  const t = cur ? cur.t0 + v.currentTime : null;
+  selCam = $("cam").value; render();
+  if (t != null) playAt(selCam, t);
+  else hashSet();
+});
+
+function gotoEvent(i) {
+  const e = data.events[i];
+  if (!e) return;
+  curEv = i;
+  document.querySelectorAll(".ev.cur,.evc.cur").forEach(x => x.classList.remove("cur"));
+  document.querySelectorAll(`[data-ev="${i}"]`).forEach(x => x.classList.add("cur"));
+  if (!camData(e.cam)) { $("info").textContent = `Kamera ${e.cam} nie ma nagrań w tym programie.`; return; }
+  playAt(e.cam, Math.max(0, e.start - 5));
+  $("player").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+$("evs").addEventListener("click", ev => { const c = ev.target.closest(".evc"); if (c) gotoEvent(+c.dataset.ev); });
+function stepEvent(dir) {
+  if (!data || !data.events.length) return;
+  const t = cur ? cur.t0 + v.currentTime : (dir > 0 ? -1 : DAY);
+  const list = data.events.map((e, i) => [e, i]).filter(([e]) => !selCam || e.cam === selCam || !camData(selCam));
+  const pick = dir > 0 ? list.find(([e]) => e.start - 5 > t + 1) : [...list].reverse().find(([e]) => e.start - 5 < t - 3);
+  if (pick) gotoEvent(pick[1]);
+}
+$("prevEv").onclick = () => stepEvent(-1);
+$("nextEv").onclick = () => stepEvent(1);
+
+$("back").onclick = () => { if (cur) seekBy(-10); };
+$("fwd").onclick = () => { if (cur) seekBy(10); };
+function seekBy(d) {
+  const t = cur.t0 + v.currentTime + d;
+  if (t < cur.seg.start || t >= cur.seg.end) playAt(cur.cam, t); else v.currentTime += d;
+}
+$("play").onclick = () => { if (!cur) return; v.paused ? v.play() : v.pause(); };
+$("speed").onclick = ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#speed button").forEach(x => x.classList.toggle("on", x === b));
+  v.playbackRate = +b.dataset.s;
+};
+$("zoom").onclick = ev => {
+  const b = ev.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#zoom button").forEach(x => x.classList.toggle("on", x === b));
+  zoom = +b.dataset.z;
+  render();
+  if (!cur && data && data.now != null && zoom > 1) { const sc = $("scroll"); sc.scrollLeft = data.now / DAY * sc.scrollWidth - sc.clientWidth / 2; }
+};
+
+function setDay(d) { $("day").value = d; hashSet(); loadDay(false); }
+function shiftDay(n) { const d = new Date($("day").value + "T12:00:00"); d.setDate(d.getDate() + n); setDay(isoDay(d)); }
+$("prevDay").onclick = () => shiftDay(-1);
+$("nextDay").onclick = () => shiftDay(1);
+$("today").onclick = () => setDay(isoDay(new Date()));
+$("day").onchange = () => setDay($("day").value);
+
+document.addEventListener("keydown", ev => {
+  if (ev.target.matches("input,select,textarea")) return;
+  if (ev.key === " ") { ev.preventDefault(); $("play").click(); }
+  else if (ev.key === "ArrowLeft") { ev.preventDefault(); if (cur) seekBy(-10); }
+  else if (ev.key === "ArrowRight") { ev.preventDefault(); if (cur) seekBy(10); }
+  else if (ev.key === ",") stepEvent(-1);
+  else if (ev.key === ".") stepEvent(1);
+});
+window.addEventListener("resize", () => { if (data) render(); });
+
+(async () => {
+  const h = hashGet();
+  $("day").value = h.date && /^\d{4}-\d{2}-\d{2}$/.test(h.date) ? h.date : isoDay(new Date());
+  $("day").max = isoDay(new Date());
+  if (h.cam) selCam = h.cam;
+  await loadDay(false);
+  if (h.cam && data && !camData(h.cam)) $("info").textContent = `Kamera ${h.cam} nie ma katalogu nagrań.`;
+  else if (h.t != null && selCam && data) playAt(selCam, h.t, false);
+})();
+</script>
+</body></html>

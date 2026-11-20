@@ -40,4 +40,4 @@ import os as _os
 _os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 _os.environ.setdefault("KMP_BLOCKTIME", "0")
 
-__version__ = "1.9.3"
+__version__ = "1.10.0"

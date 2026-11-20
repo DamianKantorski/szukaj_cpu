@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import threading
+import urllib.parse
 from datetime import datetime
 from datetime import timedelta
 
@@ -13,6 +14,15 @@ import cv2
 import numpy as np
 
 from .common import CSV_FIELDS, NAME_DATE, TS_FMT, log
+
+
+def _sod(ts):
+    """Sekunda doby z 'RRRR-MM-DD GG:MM:SS'."""
+    try:
+        h, m, sec = (int(x) for x in ts[11:19].split(":"))
+        return h * 3600 + m * 60 + sec
+    except ValueError:
+        return 0
 
 
 class Gallery:
@@ -58,6 +68,7 @@ class Gallery:
                 rows = list(self.rows)
         rows = sorted(rows, key=lambda r: r["poczatek"], reverse=True)
         parts, day = [], None
+        admin = bool(self.cfg.port and self.cfg.http_user and self.cfg.http_password)
         for r in rows:
             d = r["poczatek"][:10]
             if d != day:
@@ -76,6 +87,8 @@ class Gallery:
                 f'pewność: {r.get("max_pewnosc", "")} · klatek: {r.get("trafien", "")}'
                 + (f' · <a href="{html.escape(full)}">pełna klatka</a>'
                    if (full := (r.get("pelna") or "")) and (self.dir / full).exists() else "")
+                + (f' · <a href="/admin/nagrania#date={r["poczatek"][:10]}&amp;cam={urllib.parse.quote(r["kamera"])}'
+                   f'&amp;t={max(0, _sod(r["poczatek"]) - 5)}">nagranie</a>' if admin else "")
                 + '</figcaption></figure>')
         if day is not None:
             parts.append("</div>")
@@ -93,7 +106,7 @@ img{{width:100%;display:block}} figcaption{{padding:8px;font-size:14px;line-heig
 small{{color:#888}} a{{color:inherit}}
 </style>
 <h1>Wykrycia na kamerach ({len(rows)})</h1>
-{'<p><a href="/admin/">⚙ Obszar detekcji</a> · <a href="/admin/config">⚙ Konfiguracja</a></p>' if self.cfg.port and self.cfg.http_user and self.cfg.http_password else ''}
+{'<p><a href="/admin/nagrania">▶ Nagrania</a> · <a href="/admin/">⚙ Obszar detekcji</a> · <a href="/admin/config">⚙ Konfiguracja</a></p>' if self.cfg.port and self.cfg.http_user and self.cfg.http_password else ''}
 <p><small>Aktualizacja: {now}. Kliknij miniaturę, aby otworzyć klip (▶). Przechowywane {self.cfg.retencja:g} dni.</small></p>
 {''.join(parts)}</html>"""
         tmp = self.dir / ".index.tmp"
