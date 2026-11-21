@@ -102,8 +102,18 @@ class AudioRelay:
                 relay.forward(data)
 
         # wysyłka z portu = port iPhone'a (jak localrtpport w ffmpeg); odbiór RTCP z iPhone'a ignorujemy
-        self.out, _ = await loop.create_datagram_endpoint(asyncio.DatagramProtocol,
-                                                          local_addr=("0.0.0.0", self.local_port), remote_addr=self.dest)
+        # Port bywa jeszcze zajęty przez poprzedni podgląd (iPhone przy przełączaniu kamer podaje ten sam
+        # port, a zamknięcie gniazda w drugim akcesorium/pętli następuje chwilę później) – SO_REUSEPORT + ponowienia.
+        for attempt in range(20):
+            try:
+                self.out, _ = await loop.create_datagram_endpoint(
+                    asyncio.DatagramProtocol, local_addr=("0.0.0.0", self.local_port),
+                    remote_addr=self.dest, reuse_port=True)
+                break
+            except OSError:
+                if attempt == 19:
+                    raise
+                await asyncio.sleep(0.1)
         self.inp, _ = await loop.create_datagram_endpoint(In, local_addr=("127.0.0.1", 0))
         return self.inp.get_extra_info("sockname")[1]
 
