@@ -114,7 +114,7 @@ SCHEMA = {
                 "login_max_failures", "login_lockout_minutes",
                 "full_frame", "full_format",
                 "full_quality", "thumb_width"},
-    "notifications": {"ntfy_url", "min_interval", "ntfy_token", "priority", "click_url"},
+    "notifications": {"ntfy_url", "min_interval", "ntfy_token", "priority", "click_url", "panel_url"},
     "shinobi": {"url", "api_key", "group_key", "repeat_seconds"},
     "recording": {"enabled", "segment_minutes", "retention_days", "min_free_gb", "audio"},
     "go2rtc": {"enabled", "binary", "api_port", "rtsp_port", "rtsp_listen", "webrtc_port"},
@@ -241,6 +241,9 @@ def load_config(path):
     c.ntfy_token = get("notifications", "ntfy_token", "", str).strip()
     c.ntfy_prio = get("notifications", "priority", "high", str).strip()
     c.ntfy_click = get("notifications", "click_url", "", str).strip()
+    c.panel_url = get("notifications", "panel_url", "", str).strip().rstrip("/")
+    if c.panel_url and not c.panel_url.startswith(("http://", "https://")):
+        sys.exit(f"{path}: [notifications] panel_url must start with http:// or https://")
 
     c.sh_url = get("shinobi", "url", "", str).strip().rstrip("/")
     c.sh_api = get("shinobi", "api_key", "", str).strip()

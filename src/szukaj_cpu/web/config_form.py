@@ -192,7 +192,13 @@ FORM = [
         F("priority", "Priorytet", "select", "high", "",
           options=[["min", "min"], ["low", "niski"], ["default", "domyślny"], ["high", "wysoki"],
                    ["max", "maksymalny (alarm)"]]),
-        F("click_url", "Adres po stuknięciu", "text", "", "Np. adres galerii.", placeholder="http://serwer:8091/"),
+        F("panel_url", "Adres panelu szukaj_cpu", "text", "",
+          "Adres, pod którym telefon otwiera ten panel, np. https://omv6.twoj-tailnet.ts.net. Stuknięcie w "
+          "powiadomienie otwiera wtedy nagranie z chwili wykrycia; w powiadomieniu są też przyciski Nagranie "
+          "i Galeria. Zdjęcia na ntfy.sh znikają po 3 h, nagrania zostają.",
+          placeholder="https://omv6.twoj-tailnet.ts.net"),
+        F("click_url", "Adres po stuknięciu", "text", "",
+          "Używany tylko bez adresu panelu powyżej, np. adres galerii.", placeholder="http://serwer:8091/"),
         F("min_interval", "Odstęp między powiadomieniami", "float", 120.0, "Z jednej kamery.",
           min=0, max=3600, unit="s"),
     ]},

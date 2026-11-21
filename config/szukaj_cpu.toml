@@ -164,7 +164,12 @@ ntfy_url = ""
 ntfy_token = ""
 # min, low, default, high, max
 priority = "high"
-# Opened when the notification is tapped, e.g. the gallery "http://SERVER:8091/"
+# Address the phone uses to open this web panel, e.g. "https://omv6.your-tailnet.ts.net".
+# Tapping a notification then opens the recording at the moment of detection, and the
+# notification gets "Nagranie" and "Galeria" buttons. (Pictures on ntfy.sh expire after
+# 3 hours; recordings and the gallery stay.)
+panel_url = ""
+# Opened when the notification is tapped – only used when panel_url is empty
 click_url = ""
 # Minimum time between notifications from one camera (seconds)
 min_interval = 120

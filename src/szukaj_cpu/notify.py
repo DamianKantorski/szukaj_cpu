@@ -30,7 +30,14 @@ def notify(cfg, cam, frame, dets, labels):
     headers = {"Tags": "rotating_light"}
     if cfg.ntfy_prio:
         headers["Priority"] = cfg.ntfy_prio
-    if cfg.ntfy_click:
+    if cfg.panel_url:
+        # nagranie od ~10 s przed powiadomieniem (zdarzenie zaczęło się chwilę wcześniej)
+        t0 = datetime.fromtimestamp(now - 10)
+        rec = (f"{cfg.panel_url}/admin/nagrania#date={t0:%Y-%m-%d}&cam={urllib.parse.quote(cam.name)}"
+               f"&t={t0.hour * 3600 + t0.minute * 60 + t0.second}")
+        headers["Click"] = rec
+        headers["Actions"] = f"view, Nagranie, {rec}; view, Galeria, {cfg.panel_url}/"
+    elif cfg.ntfy_click:
         headers["Click"] = cfg.ntfy_click
     if cfg.ntfy_token:
         headers["Authorization"] = f"Bearer {cfg.ntfy_token}"
