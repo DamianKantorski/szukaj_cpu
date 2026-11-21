@@ -2,6 +2,7 @@
 
 import base64
 import functools
+import hashlib
 import hmac
 import json
 import os
@@ -75,27 +76,42 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None, hk=None):
                 return 0
             now = time.monotonic()
             with fails_lock:
-                t = [x for x in fails.get(ip, []) if now - x < window]
+                t = [x for x in fails.get(ip, []) if now - x[0] < window]
                 if t:
                     fails[ip] = t
                 else:
                     fails.pop(ip, None)
-                return int(window - (now - t[-cfg.login_max_fail])) + 1 if len(t) >= cfg.login_max_fail else 0
+                return int(window - (now - t[-cfg.login_max_fail][0])) + 1 if len(t) >= cfg.login_max_fail else 0
 
         def _failed(self, ip):
+            """Liczy RÓŻNE błędne dane logowania. Przeglądarka po powrocie z tła potrafi wysłać te same
+            nieaktualne dane wiele razy (Safari na iOS) – to jedna pomyłka, nie próba zgadywania hasła."""
             if not cfg.login_max_fail:
                 return
+            h = self.headers.get("Authorization", "")
+            try:
+                user, _, pw = base64.b64decode(h[6:]).decode("utf-8", "replace").partition(":")
+            except Exception:
+                user, pw = "?", "?"
+            if h.startswith("Basic ") and not user and not pw:
+                return                                   # puste dane (np. odtwarzacz wideo) – nie liczymy
+            digest = hashlib.sha256(h.encode()).hexdigest()[:16]
+            now = time.monotonic()
             with fails_lock:
-                fails.setdefault(ip, []).append(time.monotonic())
-                n = len(fails[ip])
+                lst = [x for x in fails.get(ip, []) if now - x[0] < window]
+                if any(d == digest for _, d in lst):
+                    fails[ip] = lst
+                    return
+                lst.append((now, digest))
+                fails[ip] = lst
+                n = len(lst)
                 if len(fails) > 1000:                    # ochrona pamięci
                     fails.pop(next(iter(fails)))
+            log.info("Panel WWW: nieudane logowanie z %s (użytkownik %r, %s, %s)", ip, user[:40],
+                     urllib.parse.urlparse(self.path).path[:60], self.headers.get("User-Agent", "")[:60])
             if n == cfg.login_max_fail:
                 log.warning("Panel WWW: %d nieudanych logowań z %s – logowanie zablokowane na %g min",
                             n, ip, cfg.login_lockout)
-
-        def log_message(self, *a):
-            pass
 
         def _authorized(self):
             if not admin_on:
@@ -104,11 +120,19 @@ def start_http(cfg, cams=(), det=None, gallery=None, g2r=None, hk=None):
             if not h.startswith("Basic "):
                 return False
             try:
-                user, _, pw = base64.b64decode(h[6:]).decode("utf-8").partition(":")
+                raw = base64.b64decode(h[6:].strip())
             except Exception:
                 return False
-            return (hmac.compare_digest(user.encode(), cfg.http_user.encode())
-                    & hmac.compare_digest(pw.encode(), cfg.http_password.encode()))
+            # UTF-8 (nagłówek po naszym charset="UTF-8"); niektóre przeglądarki/zapisane hasła – Latin-1
+            for enc in ("utf-8", "latin-1"):
+                try:
+                    user, _, pw = raw.decode(enc).partition(":")
+                except UnicodeDecodeError:
+                    continue
+                if (hmac.compare_digest(user.encode(), cfg.http_user.encode())
+                        & hmac.compare_digest(pw.encode(), cfg.http_password.encode())):
+                    return True
+            return False
 
         def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
             data = body if isinstance(body, bytes) else (
